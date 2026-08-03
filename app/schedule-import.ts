@@ -69,6 +69,8 @@ export function parseScheduleTable(text: string): ParsedScheduleBlock[] {
   const rows = text.split(/\r?\n/).map(parseRow).filter((row): row is ParsedRow => Boolean(row));
   return rows.flatMap((row, rowIndex) => {
     const end = row.explicitEnd || rows[rowIndex + 1]?.start || fallbackEnd(row.start);
-    return row.events.map((label) => ({ start: row.start, end, label, location: row.location }));
+    return row.events
+      .filter((label) => !/^(?:end|event ends?|end of event)$/i.test(label.trim()))
+      .map((label) => ({ start: row.start, end, label, location: row.location }));
   });
 }

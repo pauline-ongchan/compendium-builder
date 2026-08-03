@@ -25,3 +25,9 @@ test("keeps explicit ranges and optional locations", () => {
     { start: "9:00", end: "10:00", label: "Registration", location: "HA 098" },
   ]);
 });
+
+test("uses an End row as the prior block boundary without creating an End block", () => {
+  assert.deepEqual(parseScheduleTable("4:00 PM\tClosing Ceremony\n4:30 PM\tEnd"), [
+    { start: "4:00 PM", end: "4:30 PM", label: "Closing Ceremony", location: "" },
+  ]);
+});
