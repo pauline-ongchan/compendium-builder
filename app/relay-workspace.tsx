@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { parseScheduleTable } from "./schedule-import";
 
 type AvailabilityStatus = "available" | "conditional" | "unavailable";
 type Section = "schedule" | "people" | "roles" | "judging" | "resources";
@@ -336,17 +337,20 @@ function initialsFor(name: string) {
 
 function parseScheduleText(text: string, dayId: string): EventBlock[] {
   const colors = ["#f3c8cf", "#d8d2ef", "#c5dfd7", "#f7e0a7", "#f3d9bc", "#c8e1ef", "#d1e4e7"];
-  return text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).flatMap((line, index) => {
-    const columns = line.split(/\t|\s*\|\s*/).map((value) => value.trim()).filter((value, columnIndex, all) => value || columnIndex < all.length - 1);
-    const timeMatch = (columns[0] ?? "").match(/^(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s*(?:-|–|—|to)\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i)
-      ?? line.match(/^(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s*(?:-|–|—|to)\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s+(.+)$/i);
-    if (!timeMatch) return [];
-    const remainder = columns.length > 1 ? columns.slice(1) : [timeMatch[3] ?? "Untitled block"];
-    const label = remainder[0]?.trim() || "Untitled block";
-    const location = remainder[1]?.trim() ?? "";
-    const id = `${dayId}-import-${Date.now()}-${index}`;
-    return [{ id, label, short: label.slice(0, 3).toUpperCase(), start: timeMatch[1].trim(), end: timeMatch[2].trim(), location, color: colors[index % colors.length], target: 1, requiredRoles: [], roles: [], links: [] }];
-  });
+  const seed = Date.now();
+  return parseScheduleTable(text).map((block, index) => ({
+    id: `${dayId}-import-${seed}-${index}`,
+    label: block.label,
+    short: block.label.slice(0, 3).toUpperCase(),
+    start: block.start,
+    end: block.end,
+    location: block.location,
+    color: colors[index % colors.length],
+    target: 1,
+    requiredRoles: [],
+    roles: [],
+    links: [],
+  }));
 }
 
 function assignmentLeadName(assignment: Assignment, people: Person[]) {
@@ -738,7 +742,7 @@ function ScheduleImportDialog({ day, onClose, onImport }: { day: EventDay; onClo
       setLoading(false);
     }
   };
-  return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog import-dialog" role="dialog" aria-modal="true" aria-label="Import schedule from Google Docs"><header><div><span className="kicker">{day.label} · Google Docs</span><h2>Import schedule</h2><p>Use a public Google Doc link or paste rows copied from a document table.</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="import-form"><label>Public Google Doc link<div className="inline-field"><input value={docUrl} onChange={(event) => setDocUrl(event.target.value)} placeholder="https://docs.google.com/document/d/…" /><button className="button secondary" disabled={!docUrl.trim() || loading} onClick={loadDocument}>{loading ? "Reading…" : "Read document"}</button></div></label>{error ? <p className="form-error">{error} Paste the schedule below if the document is private.</p> : null}<label>Schedule rows<textarea rows={10} value={text} onChange={(event) => setText(event.target.value)} placeholder={`9:00–10:00 | Registration | HA 098\n10:00–11:30 | Kickoff |\n11:30–12:30 | Lunch | Birmingham`} /></label><p className="format-hint">One row per block: start–end, block name, optional location. Tabs and | separators both work.</p><div className="import-preview"><strong>{blocks.length} block{blocks.length === 1 ? "" : "s"} found</strong>{blocks.slice(0, 5).map((block) => <span key={block.id}>{block.start}–{block.end} · {block.label}{block.location ? ` · ${block.location}` : " · location blank"}</span>)}</div><label className="check-row"><input type="checkbox" checked={replace} onChange={(event) => setReplace(event.target.checked)} /><span>Replace existing blocks and assignments for {day.label}</span></label></div><footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!blocks.length} onClick={() => onImport(blocks, replace)}>Import {blocks.length || ""} block{blocks.length === 1 ? "" : "s"}</button></footer></section></div>;
+  return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog import-dialog" role="dialog" aria-modal="true" aria-label="Import schedule from Google Docs"><header><div><span className="kicker">{day.label} · Google Docs</span><h2>Import schedule</h2><p>Use a public Google Doc link or paste rows copied from a document table.</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="import-form"><label>Public Google Doc link<div className="inline-field"><input value={docUrl} onChange={(event) => setDocUrl(event.target.value)} placeholder="https://docs.google.com/document/d/…" /><button className="button secondary" disabled={!docUrl.trim() || loading} onClick={loadDocument}>{loading ? "Reading…" : "Read document"}</button></div></label>{error ? <p className="form-error">{error} Paste the schedule below if the document is private.</p> : null}<label>Schedule table<textarea rows={10} value={text} onChange={(event) => setText(event.target.value)} placeholder={`Time\tEvent\tSecond event\n9:30 AM\tRegistration\t\n10:00 AM\tOpening Ceremony\t\n10:30 AM\tFireside Chat A\tCoffee Chats B`} /></label><p className="format-hint">Paste the table directly. Relay infers each end time from the next row and creates separate blocks for parallel events. Locations stay blank. Explicit start–end rows still work.</p><div className="import-preview"><strong>{blocks.length} block{blocks.length === 1 ? "" : "s"} found</strong>{blocks.slice(0, 6).map((block) => <span key={block.id}>{block.start}–{block.end} · {block.label}{block.location ? ` · ${block.location}` : " · location blank"}</span>)}</div><label className="check-row"><input type="checkbox" checked={replace} onChange={(event) => setReplace(event.target.checked)} /><span>Replace existing blocks and assignments for {day.label}</span></label></div><footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!blocks.length} onClick={() => onImport(blocks, replace)}>Import {blocks.length || ""} block{blocks.length === 1 ? "" : "s"}</button></footer></section></div>;
 }
 
 function RosterDialog({ data, onClose, onSave }: { data: EventState; onClose: () => void; onSave: (people: Person[], groups: ExecGroup[]) => void }) {
