@@ -12,7 +12,11 @@ test("ships Relay product metadata and removes the starter preview", async () =>
   assert.match(page, /RelayWorkspace/);
   assert.match(page, /Event operations, in sync/);
   assert.match(layout, /Relay — Event operations, in sync/);
-  assert.match(workspace, /Build the flow, keep the judgment/);
+  assert.match(workspace, /Import from Google Docs/);
+  assert.match(workspace, /Exec roster and groups/);
+  assert.match(workspace, /Documents and contacts/);
+  assert.match(workspace, /Duplicate/);
+  assert.doesNotMatch(workspace, /Build the flow, keep the judgment/);
   assert.match(workspace, /Preview as exec/);
   assert.doesNotMatch(`${page}${layout}${workspace}`, /codex-preview|SkeletonPreview/);
 });
