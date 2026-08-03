@@ -17,6 +17,16 @@ const singleTime = new RegExp(`^(${timeToken})$`, "i");
 const timeRange = new RegExp(`^(${timeToken})\s*(?:-|–|—|to)\s*(${timeToken})$`, "i");
 const inlineRange = new RegExp(`^(${timeToken})\s*(?:-|–|—|to)\s*(${timeToken})\s+(.+)$`, "i");
 
+function cleanCell(value: string) {
+  let cleaned = value.trim();
+  for (const marker of ["**", "__", "`"] as const) {
+    if (cleaned.startsWith(marker) && cleaned.endsWith(marker) && cleaned.length > marker.length * 2) {
+      cleaned = cleaned.slice(marker.length, -marker.length).trim();
+    }
+  }
+  return cleaned;
+}
+
 function cleanTime(value: string) {
   return value.trim().replace(/\s+/g, " ").replace(/a\.?m\.?$/i, "AM").replace(/p\.?m\.?$/i, "PM");
 }
@@ -42,8 +52,8 @@ function fallbackEnd(start: string) {
 
 function parseRow(line: string): ParsedRow | null {
   const columns = line.includes("\t") || line.includes("|")
-    ? line.split(/\t|\|/).map((value) => value.trim())
-    : [line.trim()];
+    ? line.split(/\t|\|/).map(cleanCell)
+    : [cleanCell(line)];
   if (!columns.some(Boolean) || /^time$/i.test(columns[0] ?? "")) return null;
 
   const range = (columns[0] ?? "").match(timeRange);
@@ -53,7 +63,7 @@ function parseRow(line: string): ParsedRow | null {
     return { start: cleanTime(range[1]), explicitEnd: cleanTime(range[2]), events: [label], location: columns[2]?.trim() ?? "" };
   }
 
-  const inline = line.trim().match(inlineRange);
+  const inline = cleanCell(line).match(inlineRange);
   if (columns.length === 1 && inline) {
     return { start: cleanTime(inline[1]), explicitEnd: cleanTime(inline[2]), events: [inline[3].trim()], location: "" };
   }
@@ -65,8 +75,43 @@ function parseRow(line: string): ParsedRow | null {
   return { start: cleanTime(start[1]), explicitEnd: "", events, location: "" };
 }
 
+function parseRows(text: string): ParsedRow[] {
+  const rows: ParsedRow[] = [];
+  let pending: ParsedRow | null = null;
+  const flushPending = () => {
+    if (pending) rows.push(pending);
+    pending = null;
+  };
+
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = cleanCell(rawLine);
+    if (!line || /^(?:time|event)$/i.test(line)) continue;
+
+    if (rawLine.includes("\t") || rawLine.includes("|") || inlineRange.test(line)) {
+      const row = parseRow(rawLine);
+      if (row) {
+        flushPending();
+        rows.push(row);
+      }
+      continue;
+    }
+
+    const start = line.match(singleTime);
+    if (start) {
+      flushPending();
+      pending = { start: cleanTime(start[1]), explicitEnd: "", events: [], location: "" };
+      continue;
+    }
+
+    if (pending) pending.events.push(line);
+  }
+
+  flushPending();
+  return rows;
+}
+
 export function parseScheduleTable(text: string): ParsedScheduleBlock[] {
-  const rows = text.split(/\r?\n/).map(parseRow).filter((row): row is ParsedRow => Boolean(row));
+  const rows = parseRows(text);
   return rows.flatMap((row, rowIndex) => {
     const end = row.explicitEnd || rows[rowIndex + 1]?.start || fallbackEnd(row.start);
     return row.events

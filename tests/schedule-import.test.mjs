@@ -31,3 +31,29 @@ test("uses an End row as the prior block boundary without creating an End block"
     { start: "4:00 PM", end: "4:30 PM", label: "Closing Ceremony", location: "" },
   ]);
 });
+
+test("reconstructs bold Google Docs cells exported one per line", () => {
+  const blocks = parseScheduleTable(`**Thursday (Jan. 28, 2027) - Main Goal, Inspiration for 2nd and 3rd Day**
+**Time**
+**Event**
+**5:30 PM**
+**Registration**
+**6:00 PM**
+**Opening Ceremonies**
+**6:30 PM**
+**Keynote**
+**7:00 PM**
+**Panel**
+**7:45 PM**
+**Open Networking, Light Refreshments**
+**9:00 PM**
+**Event Ends**`);
+
+  assert.deepEqual(blocks, [
+    { start: "5:30 PM", end: "6:00 PM", label: "Registration", location: "" },
+    { start: "6:00 PM", end: "6:30 PM", label: "Opening Ceremonies", location: "" },
+    { start: "6:30 PM", end: "7:00 PM", label: "Keynote", location: "" },
+    { start: "7:00 PM", end: "7:45 PM", label: "Panel", location: "" },
+    { start: "7:45 PM", end: "9:00 PM", label: "Open Networking, Light Refreshments", location: "" },
+  ]);
+});
