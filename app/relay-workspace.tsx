@@ -86,6 +86,7 @@ type EventState = {
   venue: string;
   publishedAt: string;
   draftChanges: number;
+  judgingEnabled: boolean;
   people: Person[];
   days: EventDay[];
   resources: Resource[];
@@ -219,6 +220,7 @@ const seedData: EventState = {
   venue: "Henry Angus Building",
   publishedAt: "Aug 3, 2:14 PM",
   draftChanges: 3,
+  judgingEnabled: true,
   people: peopleBase.map(([id, name, initials, team, color, preferences]) => ({
     id, name, initials, team, color, preferences: [...preferences],
     phone: id === "pauline" ? "604-555-0182" : id === "benny" ? "604-555-0148" : "",
@@ -310,6 +312,7 @@ function normalizeEvent(raw: EventState): EventState {
   return {
     ...raw,
     eventId,
+    judgingEnabled: raw.judgingEnabled ?? (raw.eventType === "Competition" || Boolean(raw.judgingRooms?.length)),
     groups,
     contacts: raw.contacts ?? [],
     resources: raw.resources ?? [],
@@ -353,6 +356,7 @@ function createBlankEvent(values: { name: string; type: string; venue: string; s
     venue: values.venue,
     publishedAt: "Not published",
     draftChanges: 1,
+    judgingEnabled: values.type === "Competition",
     people: people.map((person) => ({ ...person, availability: Object.fromEntries(days.map((day) => [day.id, {}])) })),
     days,
     resources: [],
@@ -426,6 +430,7 @@ export function RelayWorkspace() {
   const [showEventLibrary, setShowEventLibrary] = useState(false);
   const [showScheduleImport, setShowScheduleImport] = useState(false);
   const [showRoster, setShowRoster] = useState(false);
+  const [showEventSettings, setShowEventSettings] = useState(false);
   const [profilePersonId, setProfilePersonId] = useState<string | null>(null);
   const [roleTemplateEditor, setRoleTemplateEditor] = useState<{ templateId?: string } | null>(null);
   const [execPersonId, setExecPersonId] = useState("angela");
@@ -688,6 +693,13 @@ export function RelayWorkspace() {
     }
   };
 
+  const saveEventSettings = (eventType: string, judgingEnabled: boolean) => {
+    const next = { ...structuredClone(data), eventType, judgingEnabled, draftChanges: data.draftChanges + 1 };
+    if (!judgingEnabled && section === "judging") setSection("schedule");
+    setShowEventSettings(false);
+    void save(next, "Event modules updated.");
+  };
+
   const saveOverview = (resources: Resource[], contacts: ImportantContact[]) => {
     const next = structuredClone(data);
     next.resources = resources;
@@ -721,6 +733,14 @@ export function RelayWorkspace() {
     void save(next, `${slot.team} marked ${slot.status.toLowerCase()}.`);
   };
 
+  const directorSections: [Section, string, string][] = [
+    ["schedule", "Schedule", "01"],
+    ["people", "People + availability", "02"],
+    ["roles", "Roles + instructions", "03"],
+    ...(data.judgingEnabled ? [["judging", "Judging rooms", "04"]] as [Section, string, string][] : []),
+    ["resources", "Event overview", data.judgingEnabled ? "05" : "04"],
+  ];
+
   return (
     <div className={`app-shell ${mode === "exec" ? "exec-shell" : ""}`}>
       {mode === "director" ? (
@@ -729,9 +749,7 @@ export function RelayWorkspace() {
             <button className="brand" onClick={() => setSection("schedule")} aria-label="Relay home"><span>R</span> relay</button>
             <button className="event-mini" onClick={() => setShowEventLibrary(true)}><span className="event-mark">{data.eventName.slice(0, 2).toUpperCase()}</span><div><strong>{data.eventName}</strong><small>{data.dateRange}</small></div><span aria-hidden="true">⌄</span></button>
             <nav aria-label="Director workspace">
-              {([[
-                "schedule", "Schedule", "01"
-              ], ["people", "People + availability", "02"], ["roles", "Roles + instructions", "03"], ["judging", "Judging rooms", "04"], ["resources", "Event overview", "05"]] as [Section, string, string][]).map(([id, label, number]) => (
+              {directorSections.map(([id, label, number]) => (
                 <button key={id} className={section === id ? "active" : ""} onClick={() => setSection(id)}><span>{number}</span>{label}{id === "schedule" && warnings.length > 0 ? <b>{warnings.length}</b> : null}</button>
               ))}
             </nav>
@@ -740,7 +758,7 @@ export function RelayWorkspace() {
           <main className="workspace">
             <header className="workspace-header">
               <div><div className="eyebrow">{data.eventType} · {data.venue}</div><h1>{data.eventName}</h1><p>{data.dateRange} <span>•</span> Published {data.publishedAt}</p></div>
-              <div className="header-actions"><span className={`save-state ${saving ? "saving" : ""}`}>{saving ? "Saving…" : hydrated ? "All changes saved" : "Connecting…"}</span><button className="button secondary" onClick={() => setShowNewEvent(true)}>+ New event</button><button className="button secondary" onClick={() => setMode("exec")}>Exec view</button><button className="button primary" onClick={publish} disabled={data.draftChanges === 0}>Publish {data.draftChanges ? `${data.draftChanges} changes` : "changes"}</button></div>
+              <div className="header-actions"><span className={`save-state ${saving ? "saving" : ""}`}>{saving ? "Saving…" : hydrated ? "All changes saved" : "Connecting…"}</span><button className="button secondary" onClick={() => setShowEventSettings(true)}>Settings</button><button className="button secondary" onClick={() => setShowNewEvent(true)}>+ New event</button><button className="button secondary" onClick={() => setMode("exec")}>Exec view</button><button className="button primary" onClick={publish} disabled={data.draftChanges === 0}>Publish {data.draftChanges ? `${data.draftChanges} changes` : "changes"}</button></div>
             </header>
 
             {section === "schedule" && <ScheduleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} warnings={warnings} covered={covered} required={required} onCell={(blockId, personId, assignmentId) => setDrawer({ blockId, personId, assignmentId })} onAddBlock={() => setBlockEditor({})} onImport={() => setShowScheduleImport(true)} onEditBlock={(blockId) => setBlockEditor({ blockId })} onDuplicateBlock={duplicateBlock} onDeleteBlock={deleteBlock} />}
@@ -757,6 +775,7 @@ export function RelayWorkspace() {
           {showRoster && <RosterDialog data={data} onClose={() => setShowRoster(false)} onSave={saveRoster} />}
           {profilePersonId && <ProfileDialog person={data.people.find((person) => person.id === profilePersonId)!} onClose={() => setProfilePersonId(null)} onSave={saveProfile} />}
           {roleTemplateEditor && <RoleTemplateDialog data={data} templateId={roleTemplateEditor.templateId} onClose={() => setRoleTemplateEditor(null)} onSave={saveRoleTemplate} onDelete={deleteRoleTemplate} />}
+          {showEventSettings && <EventSettingsDialog data={data} onClose={() => setShowEventSettings(false)} onSave={saveEventSettings} />}
         </>
       ) : (
         <ExecView data={data} person={currentExec} dayId={dayId} setDayId={setDayId} section={execSection} setSection={setExecSection} onAvailability={updateAvailability} onPersonChange={setExecPersonId} onExit={() => setMode("director")} />
@@ -945,6 +964,12 @@ function RoleTemplateDialog({ data, templateId, onClose, onSave, onDelete }: { d
   const [target, setTarget] = useState(existing?.target ?? 1);
   const [intensity, setIntensity] = useState<RoleTemplate["intensity"]>(existing?.intensity ?? "Medium");
   return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog profile-dialog" role="dialog" aria-modal="true" aria-label={`${existing ? "Edit" : "Create"} role template`}><header><div><span className="kicker">Role library</span><h2>{existing ? existing.name : "Create a reusable role"}</h2><p>These are the defaults copied into each block. Block-specific descriptions can be edited afterward.</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="setup-form"><label>Role name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Food Server" autoFocus /></label><label>Default instructions<textarea rows={5} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What should this role usually do?" /></label><div className="form-row"><label>Default lead<select value={leadPersonId} onChange={(event) => setLeadPersonId(event.target.value)}><option value="">Choose per block</option>{data.people.map((person) => <option value={person.id} key={person.id}>{person.name}</option>)}</select></label><label>People needed<input type="number" min="1" value={target} onChange={(event) => setTarget(Math.max(1, Number(event.target.value)))} /></label></div><label>Intensity<select value={intensity} onChange={(event) => setIntensity(event.target.value as RoleTemplate["intensity"])}><option>Low</option><option>Medium</option><option>High</option></select></label></div><footer>{existing ? <button className="button danger push-left" onClick={() => onDelete(existing.id)}>Delete role</button> : null}<button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!name.trim()} onClick={() => onSave({ id, name: name.trim(), description: description.trim() || `Support the event team as ${name.trim()}.`, leadPersonId, target, intensity })}>{existing ? "Save role" : "Create role"}</button></footer></section></div>;
+}
+
+function EventSettingsDialog({ data, onClose, onSave }: { data: EventState; onClose: () => void; onSave: (eventType: string, judgingEnabled: boolean) => void }) {
+  const [eventType, setEventType] = useState(data.eventType);
+  const [judgingEnabled, setJudgingEnabled] = useState(data.judgingEnabled);
+  return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog profile-dialog" role="dialog" aria-modal="true" aria-label="Event settings"><header><div><span className="kicker">Workspace settings</span><h2>Event modules</h2><p>Keep the workspace focused by enabling specialized views only when this event needs them.</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="setup-form"><label>Event type<select value={eventType} onChange={(event) => { const nextType = event.target.value; setEventType(nextType); if (nextType === "Competition") setJudgingEnabled(true); }}><option>Conference</option><option>Competition</option><option>Workshop</option><option>Social</option><option>Other</option></select></label><label className="module-toggle"><input type="checkbox" checked={judgingEnabled} onChange={(event) => setJudgingEnabled(event.target.checked)} /><span><strong>Judging rooms</strong><small>Show the live judging-room view for competitions or events with scored presentations.</small></span></label></div><footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" onClick={() => onSave(eventType, judgingEnabled)}>Save settings</button></footer></section></div>;
 }
 
 function BlockEditor({ data, day, blockId, onClose, onSave }: { data: EventState; day: EventDay; blockId?: string; onClose: () => void; onSave: (block: EventBlock) => void }) {
