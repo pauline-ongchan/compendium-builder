@@ -8,7 +8,7 @@ type Section = "schedule" | "people" | "roles" | "judging" | "resources";
 type ExecSection = "today" | "schedule" | "availability" | "overview" | "directory";
 
 type BlockLink = { id: string; label: string; url: string };
-type BlockRole = {
+type RoleTemplate = {
   id: string;
   name: string;
   description: string;
@@ -16,6 +16,7 @@ type BlockRole = {
   target: number;
   intensity: "Low" | "Medium" | "High";
 };
+type BlockRole = RoleTemplate & { templateId?: string };
 
 type Person = {
   id: string;
@@ -88,6 +89,7 @@ type EventState = {
   people: Person[];
   days: EventDay[];
   resources: Resource[];
+  roleLibrary: RoleTemplate[];
   groups: ExecGroup[];
   contacts: ImportantContact[];
   judgingRooms: JudgingRoom[];
@@ -237,6 +239,14 @@ const seedData: EventState = {
     { id: "r5", label: "Participant feedback form", group: "Feedback", url: "#" },
     { id: "r6", label: "Emergency contacts", group: "Contacts", url: "#" },
   ],
+  roleLibrary: Object.entries(roleDescriptions).map(([name, description], index) => ({
+    id: `role-template-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+    name,
+    description,
+    leadPersonId: "",
+    target: 1,
+    intensity: ["Materials", "Food Team", "Usher Hackers", "Sweep"].includes(name) ? "High" as const : ["On Call", "Media"].includes(name) ? "Low" as const : "Medium" as const,
+  })),
   groups: ["Experience", "Development", "Partnerships", "Marketing", "Finance", "Co-President"].map((name, index) => ({
     id: name.toLowerCase().replace(/[^a-z0-9]+/g, "-"), name,
     color: ["#dfef79", "#7f99ff", "#b9a7ff", "#f8bb65", "#92c9ff", "#e7f16c"][index],
@@ -288,12 +298,22 @@ function normalizeEvent(raw: EventState): EventState {
     id: name.toLowerCase().replace(/[^a-z0-9]+/g, "-"), name, color: ["#dfef79", "#7f99ff", "#b9a7ff", "#f8bb65", "#92c9ff"][index % 5],
   }));
   const groups = raw.groups?.length ? raw.groups : legacyGroups;
+  const derivedRoleNames = Array.from(new Set((raw.days ?? []).flatMap((day) => day.blocks.flatMap((block) => blockRoles(block).map((role) => role.name)))));
+  const roleLibrary = raw.roleLibrary?.length ? raw.roleLibrary : derivedRoleNames.map((name, index) => ({
+    id: `role-template-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${index}`,
+    name,
+    description: roleDescriptions[name] ?? `Support the event team as ${name}.`,
+    leadPersonId: "",
+    target: 1,
+    intensity: ["Materials", "Food Team", "Usher Hackers", "Sweep"].includes(name) ? "High" as const : "Medium" as const,
+  }));
   return {
     ...raw,
     eventId,
     groups,
     contacts: raw.contacts ?? [],
     resources: raw.resources ?? [],
+    roleLibrary,
     people: raw.people.map((person) => ({
       ...person,
       phone: person.phone ?? "",
@@ -306,7 +326,7 @@ function normalizeEvent(raw: EventState): EventState {
     })),
     days: raw.days.map((day) => ({
       ...day,
-      blocks: sortBlocks(day.blocks.map((block) => ({ ...block, roles: blockRoles(block), links: block.links ?? [] }))),
+      blocks: sortBlocks(day.blocks.map((block) => ({ ...block, roles: blockRoles(block).map((role) => ({ ...role, templateId: role.templateId ?? roleLibrary.find((template) => template.name.toLowerCase() === role.name.toLowerCase())?.id })), links: block.links ?? [] }))),
     })),
   };
 }
@@ -336,6 +356,7 @@ function createBlankEvent(values: { name: string; type: string; venue: string; s
     people: people.map((person) => ({ ...person, availability: Object.fromEntries(days.map((day) => [day.id, {}])) })),
     days,
     resources: [],
+    roleLibrary: Object.entries(roleDescriptions).map(([name, description], index) => ({ id: `role-template-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${index}`, name, description, leadPersonId: "", target: 1, intensity: ["Materials", "Food Team", "Usher Hackers", "Sweep"].includes(name) ? "High" as const : "Medium" as const })),
     groups: structuredClone((dataSafePeopleGroups(people))),
     contacts: [],
     judgingRooms: [],
@@ -406,6 +427,7 @@ export function RelayWorkspace() {
   const [showScheduleImport, setShowScheduleImport] = useState(false);
   const [showRoster, setShowRoster] = useState(false);
   const [profilePersonId, setProfilePersonId] = useState<string | null>(null);
+  const [roleTemplateEditor, setRoleTemplateEditor] = useState<{ templateId?: string } | null>(null);
   const [execPersonId, setExecPersonId] = useState("angela");
   const [toast, setToast] = useState("");
   const [saving, setSaving] = useState(false);
@@ -612,6 +634,46 @@ export function RelayWorkspace() {
     void save(next, `${person.name}’s preferences and private notes updated.`);
   };
 
+  const saveRoleTemplate = (template: RoleTemplate) => {
+    const next = structuredClone(data);
+    const index = next.roleLibrary.findIndex((item) => item.id === template.id);
+    if (index >= 0) next.roleLibrary[index] = template;
+    else next.roleLibrary.push(template);
+    next.roleLibrary.sort((a, b) => a.name.localeCompare(b.name));
+    next.draftChanges += 1;
+    setRoleTemplateEditor(null);
+    void save(next, index >= 0 ? `${template.name} updated in the role library.` : `${template.name} added to the role library.`);
+  };
+
+  const deleteRoleTemplate = (templateId: string) => {
+    const next = structuredClone(data);
+    const template = next.roleLibrary.find((item) => item.id === templateId);
+    if (!template || !window.confirm(`Delete “${template.name}” from the role library? Roles already placed in blocks will stay as editable custom roles.`)) return;
+    next.roleLibrary = next.roleLibrary.filter((item) => item.id !== templateId);
+    for (const day of next.days) for (const block of day.blocks) block.roles = blockRoles(block).map((role) => role.templateId === templateId ? { ...role, templateId: undefined } : role);
+    next.draftChanges += 1;
+    setRoleTemplateEditor(null);
+    void save(next, `${template.name} removed from the role library.`);
+  };
+
+  const addRoleToBlock = (templateId: string, blockId: string) => {
+    const next = structuredClone(data);
+    const template = next.roleLibrary.find((item) => item.id === templateId);
+    const day = next.days.find((item) => item.id === dayId);
+    const block = day?.blocks.find((item) => item.id === blockId);
+    if (!template || !block) return;
+    const roles = blockRoles(block);
+    if (roles.some((role) => role.templateId === templateId || role.name.toLowerCase() === template.name.toLowerCase())) {
+      setToast(`${template.name} is already in ${block.label}.`);
+      window.setTimeout(() => setToast(""), 2400);
+      return;
+    }
+    block.roles = [...roles, { ...structuredClone(template), id: `${block.id}-role-${Date.now()}`, templateId }];
+    block.requiredRoles = block.roles.map((role) => role.name);
+    next.draftChanges += 1;
+    void save(next, `${template.name} added to ${block.label}. Edit the block to tailor its instructions.`);
+  };
+
   const shareAvailability = async () => {
     const url = new URL(window.location.href);
     url.search = "";
@@ -683,7 +745,7 @@ export function RelayWorkspace() {
 
             {section === "schedule" && <ScheduleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} warnings={warnings} covered={covered} required={required} onCell={(blockId, personId, assignmentId) => setDrawer({ blockId, personId, assignmentId })} onAddBlock={() => setBlockEditor({})} onImport={() => setShowScheduleImport(true)} onEditBlock={(blockId) => setBlockEditor({ blockId })} onDuplicateBlock={duplicateBlock} onDeleteBlock={deleteBlock} />}
             {section === "people" && <PeopleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} onAvailability={(personId, blockId) => updateAvailability(personId, activeDay.id, blockId)} onManageRoster={() => setShowRoster(true)} onShareAvailability={shareAvailability} onEditProfile={setProfilePersonId} />}
-            {section === "roles" && <RolesView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} onOpen={(assignment) => setDrawer({ blockId: assignment.blockId, personId: assignment.personId, assignmentId: assignment.id })} onEditBlock={(blockId) => setBlockEditor({ blockId })} onDuplicateBlock={duplicateBlock} />}
+            {section === "roles" && <RolesView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} onOpen={(assignment) => setDrawer({ blockId: assignment.blockId, personId: assignment.personId, assignmentId: assignment.id })} onEditBlock={(blockId) => setBlockEditor({ blockId })} onDuplicateBlock={duplicateBlock} onAddRoleToBlock={addRoleToBlock} onCreateRole={() => setRoleTemplateEditor({})} onEditRole={(templateId) => setRoleTemplateEditor({ templateId })} />}
             {section === "judging" && <JudgingView data={data} onCycle={cycleJudgingStatus} />}
             {section === "resources" && <ResourcesView data={data} onSave={saveOverview} />}
           </main>
@@ -694,6 +756,7 @@ export function RelayWorkspace() {
           {showScheduleImport && <ScheduleImportDialog day={activeDay} onClose={() => setShowScheduleImport(false)} onImport={importSchedule} />}
           {showRoster && <RosterDialog data={data} onClose={() => setShowRoster(false)} onSave={saveRoster} />}
           {profilePersonId && <ProfileDialog person={data.people.find((person) => person.id === profilePersonId)!} onClose={() => setProfilePersonId(null)} onSave={saveProfile} />}
+          {roleTemplateEditor && <RoleTemplateDialog data={data} templateId={roleTemplateEditor.templateId} onClose={() => setRoleTemplateEditor(null)} onSave={saveRoleTemplate} onDelete={deleteRoleTemplate} />}
         </>
       ) : (
         <ExecView data={data} person={currentExec} dayId={dayId} setDayId={setDayId} section={execSection} setSection={setExecSection} onAvailability={updateAvailability} onPersonChange={setExecPersonId} onExit={() => setMode("director")} />
@@ -761,16 +824,19 @@ function PeopleView({ data, activeDay, dayId, setDayId, onAvailability, onManage
   </div>;
 }
 
-function RolesView({ data, activeDay, dayId, setDayId, onOpen, onEditBlock, onDuplicateBlock }: { data: EventState; activeDay: EventDay; dayId: string; setDayId: (id: string) => void; onOpen: (assignment: Assignment) => void; onEditBlock: (blockId: string) => void; onDuplicateBlock: (blockId: string) => void }) {
-  return <div className="content"><div className="section-title compact"><div><span className="kicker">Roles</span><h2>Roles and instructions</h2><p>Set defaults by block. Assign one exec or an available group, then override individuals as needed.</p></div><DayToggle data={data} dayId={dayId} setDayId={setDayId} /></div>{activeDay.blocks.length === 0 ? <section className="empty-builder"><h3>No blocks yet</h3><p>Add a schedule block first, then define its roles.</p></section> : <div className="role-blocks">{activeDay.blocks.map((block) => {
+function RolesView({ data, activeDay, dayId, setDayId, onOpen, onEditBlock, onDuplicateBlock, onAddRoleToBlock, onCreateRole, onEditRole }: { data: EventState; activeDay: EventDay; dayId: string; setDayId: (id: string) => void; onOpen: (assignment: Assignment) => void; onEditBlock: (blockId: string) => void; onDuplicateBlock: (blockId: string) => void; onAddRoleToBlock: (templateId: string, blockId: string) => void; onCreateRole: () => void; onEditRole: (templateId: string) => void }) {
+  return <div className="content"><div className="section-title compact"><div><span className="kicker">Roles</span><h2>Reusable roles and block instructions</h2><p>Create a role once, drag it into any block, then tailor that block’s description without changing the master role.</p></div><DayToggle data={data} dayId={dayId} setDayId={setDayId} /></div><div className="roles-workspace"><aside className="role-library"><header><div><span className="kicker">Master list</span><h3>Role library</h3><p>Drag a role onto a block or use its add menu.</p></div><button onClick={onCreateRole}>+ New role</button></header><div>{data.roleLibrary.map((template) => {
+    const usedIn = data.days.flatMap((day) => day.blocks.filter((block) => blockRoles(block).some((role) => role.templateId === template.id || role.name.toLowerCase() === template.name.toLowerCase())).map((block) => `${day.label} · ${block.label}`));
+    return <article key={template.id} draggable onDragStart={(event) => { event.dataTransfer.setData("text/relay-role-id", template.id); event.dataTransfer.effectAllowed = "copy"; }}><i style={{ background: roleColor(template.name) }} /><div><strong>{template.name}</strong><p>{template.description}</p><small>{usedIn.length ? `Used in ${usedIn.length} block${usedIn.length === 1 ? "" : "s"}` : "Not used yet"}</small></div><button onClick={() => onEditRole(template.id)} aria-label={`Edit ${template.name}`}>Edit</button></article>;
+  })}{!data.roleLibrary.length ? <p className="empty-copy">Create your first reusable role.</p> : null}</div></aside><section className="role-block-column">{activeDay.blocks.length === 0 ? <section className="empty-builder"><h3>No blocks yet</h3><p>Add a schedule block first, then drag roles into it.</p></section> : <div className="role-blocks">{sortBlocks(activeDay.blocks).map((block) => {
     const roles = blockRoles(block);
-    return <section key={block.id}><header style={{ background: block.color }}><div><small>{block.start}–{block.end}</small><h3>{block.label}</h3></div><div className="block-header-actions"><span>{block.location || "Location not set"}</span><button onClick={() => onDuplicateBlock(block.id)}>Duplicate</button><button onClick={() => onEditBlock(block.id)}>Edit roles</button></div></header><div className="role-list">{roles.map((role) => {
+    return <section className="role-drop-zone" key={block.id} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; }} onDrop={(event) => { event.preventDefault(); onAddRoleToBlock(event.dataTransfer.getData("text/relay-role-id"), block.id); }}><header style={{ background: block.color }}><div><small>{block.start}–{block.end}</small><h3>{block.label}</h3><span>{roles.length} role{roles.length === 1 ? "" : "s"}</span></div><div className="block-header-actions"><select defaultValue="" aria-label={`Add role to ${block.label}`} onChange={(event) => { if (event.target.value) onAddRoleToBlock(event.target.value, block.id); event.currentTarget.value = ""; }}><option value="">+ Add from library</option>{data.roleLibrary.filter((template) => !roles.some((role) => role.templateId === template.id || role.name.toLowerCase() === template.name.toLowerCase())).map((template) => <option value={template.id} key={template.id}>{template.name}</option>)}</select><button onClick={() => onDuplicateBlock(block.id)}>Duplicate</button><button onClick={() => onEditBlock(block.id)}>Edit block roles</button></div></header><div className="role-list">{roles.map((role) => {
       const assigned = activeDay.assignments.filter((assignment) => assignment.blockId === block.id && assignment.role === role.name);
       const first = assigned[0];
       const lead = data.people.find((person) => person.id === role.leadPersonId);
-      return <button key={role.id} onClick={() => first ? onOpen(first) : onEditBlock(block.id)}><i style={{ background: roleColor(role.name) }} /><div><strong>{role.name}</strong><p>{role.description}</p><small>Lead: {lead?.name ?? "Not assigned"} · Target {role.target}</small></div><span className="member-stack">{assigned.slice(0, 3).map((assignment) => <PersonAvatar person={data.people.find((person) => person.id === assignment.personId)!} small key={assignment.id} />)}<b>{assigned.length ? assigned.map((assignment) => data.people.find((person) => person.id === assignment.personId)?.name).join(", ") : "No members assigned"}</b></span><em>→</em></button>;
-    })}</div></section>;
-  })}</div>}</div>;
+      return <button key={role.id} onClick={() => first ? onOpen(first) : onEditBlock(block.id)}><i style={{ background: roleColor(role.name) }} /><div><strong>{role.name}{role.templateId ? <em>Library</em> : null}</strong><p>{role.description}</p><small>Lead: {lead?.name ?? "Not assigned"} · Target {role.target} · {role.intensity}</small></div><span className="member-stack">{assigned.slice(0, 3).map((assignment) => <PersonAvatar person={data.people.find((person) => person.id === assignment.personId)!} small key={assignment.id} />)}<b>{assigned.length ? assigned.map((assignment) => data.people.find((person) => person.id === assignment.personId)?.name).join(", ") : "No members assigned"}</b></span><span>→</span></button>;
+    })}{!roles.length ? <button className="empty-role-drop" onClick={() => onEditBlock(block.id)}>Drop a role here or add a custom role →</button> : null}</div></section>;
+  })}</div>}</section></div></div>;
 }
 
 function JudgingView({ data, onCycle }: { data: EventState; onCycle: (roomId: string, slotIndex: number) => void }) {
@@ -868,6 +934,17 @@ function ProfileDialog({ person, onClose, onSave }: { person: Person; onClose: (
   const [preferences, setPreferences] = useState(person.preferences.join(", "));
   const [privateNote, setPrivateNote] = useState(person.privateNote);
   return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog profile-dialog" role="dialog" aria-modal="true" aria-label={`Edit ${person.name}`}><header><div><span className="kicker">People profile</span><h2>{person.name}</h2><p>Preferences improve assignment suggestions. Private notes stay in the director workspace.</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="setup-form"><label>Role preferences<input value={preferences} onChange={(event) => setPreferences(event.target.value)} placeholder="Food Team, Participant Care" /><small>Separate preferences with commas.</small></label><label>Private notes<textarea rows={6} value={privateNote} onChange={(event) => setPrivateNote(event.target.value)} placeholder="Director-only context, accommodations, or assignment notes" /></label></div><footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" onClick={() => onSave(person.id, preferences.split(",").map((item) => item.trim()).filter(Boolean), privateNote.trim())}>Save profile</button></footer></section></div>;
+}
+
+function RoleTemplateDialog({ data, templateId, onClose, onSave, onDelete }: { data: EventState; templateId?: string; onClose: () => void; onSave: (template: RoleTemplate) => void; onDelete: (templateId: string) => void }) {
+  const existing = data.roleLibrary.find((template) => template.id === templateId);
+  const [id] = useState(existing?.id ?? `role-template-${Date.now()}`);
+  const [name, setName] = useState(existing?.name ?? "");
+  const [description, setDescription] = useState(existing?.description ?? "");
+  const [leadPersonId, setLeadPersonId] = useState(existing?.leadPersonId ?? "");
+  const [target, setTarget] = useState(existing?.target ?? 1);
+  const [intensity, setIntensity] = useState<RoleTemplate["intensity"]>(existing?.intensity ?? "Medium");
+  return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog profile-dialog" role="dialog" aria-modal="true" aria-label={`${existing ? "Edit" : "Create"} role template`}><header><div><span className="kicker">Role library</span><h2>{existing ? existing.name : "Create a reusable role"}</h2><p>These are the defaults copied into each block. Block-specific descriptions can be edited afterward.</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="setup-form"><label>Role name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Food Server" autoFocus /></label><label>Default instructions<textarea rows={5} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What should this role usually do?" /></label><div className="form-row"><label>Default lead<select value={leadPersonId} onChange={(event) => setLeadPersonId(event.target.value)}><option value="">Choose per block</option>{data.people.map((person) => <option value={person.id} key={person.id}>{person.name}</option>)}</select></label><label>People needed<input type="number" min="1" value={target} onChange={(event) => setTarget(Math.max(1, Number(event.target.value)))} /></label></div><label>Intensity<select value={intensity} onChange={(event) => setIntensity(event.target.value as RoleTemplate["intensity"])}><option>Low</option><option>Medium</option><option>High</option></select></label></div><footer>{existing ? <button className="button danger push-left" onClick={() => onDelete(existing.id)}>Delete role</button> : null}<button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!name.trim()} onClick={() => onSave({ id, name: name.trim(), description: description.trim() || `Support the event team as ${name.trim()}.`, leadPersonId, target, intensity })}>{existing ? "Save role" : "Create role"}</button></footer></section></div>;
 }
 
 function BlockEditor({ data, day, blockId, onClose, onSave }: { data: EventState; day: EventDay; blockId?: string; onClose: () => void; onSave: (block: EventBlock) => void }) {

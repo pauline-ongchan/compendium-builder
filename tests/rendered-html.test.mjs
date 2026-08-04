@@ -16,6 +16,8 @@ test("ships Relay product metadata and removes the starter preview", async () =>
   assert.match(workspace, /Exec roster and teams/);
   assert.match(workspace, /Share availability/);
   assert.match(workspace, /Preferences and private notes/);
+  assert.match(workspace, /Role library/);
+  assert.match(workspace, /Add from library/);
   assert.match(workspace, /Documents and contacts/);
   assert.match(workspace, /Duplicate/);
   assert.doesNotMatch(workspace, /Build the flow, keep the judgment/);

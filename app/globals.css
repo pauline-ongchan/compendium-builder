@@ -175,15 +175,35 @@ button { color: inherit; }
 .tag-row span { background: #e8e5dc; border-radius: 99px; padding: 4px 7px; font-size: 8px; }
 .private-note { font-size: 10px; line-height: 1.45; color: var(--muted); border-top: 1px solid var(--line); padding-top: 10px; margin: 0; }
 .private-note b { color: #8f4e45; text-transform: uppercase; font-size: 7px; letter-spacing: .1em; margin-right: 7px; }
+.roles-workspace { display: grid; grid-template-columns: minmax(260px, .72fr) minmax(620px, 1.7fr); gap: 16px; align-items: start; }
+.role-library { position: sticky; top: 18px; max-height: calc(100vh - 36px); overflow: hidden; border: 1px solid var(--ink); background: var(--panel); }
+.role-library > header { padding: 14px; border-bottom: 1px solid var(--ink); display: flex; align-items: start; justify-content: space-between; gap: 10px; }
+.role-library h3, .role-library p { margin: 0; }
+.role-library h3 { margin-top: 4px; font-size: 18px; }
+.role-library header p { margin-top: 4px; color: var(--muted); font-size: 8px; line-height: 1.4; }
+.role-library header > button { border: 0; border-radius: 7px; background: var(--acid); padding: 8px 9px; font-size: 8px; font-weight: 780; cursor: pointer; white-space: nowrap; }
+.role-library > div { max-height: calc(100vh - 145px); overflow-y: auto; }
+.role-library article { min-height: 92px; padding: 10px; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: 6px 1fr auto; gap: 10px; align-items: center; cursor: grab; }
+.role-library article:active { cursor: grabbing; }
+.role-library article > i { width: 6px; height: 52px; border-radius: 99px; }
+.role-library article strong, .role-library article p, .role-library article small { display: block; }
+.role-library article strong { font-size: 11px; }
+.role-library article p { margin-top: 4px; color: var(--muted); font-size: 8px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.role-library article small { margin-top: 6px; color: #5e6865; font-size: 7px; font-weight: 650; }
+.role-library article > button { border: 1px solid var(--line); border-radius: 6px; background: transparent; padding: 6px; font-size: 7px; font-weight: 750; cursor: pointer; }
+.role-block-column { min-width: 0; }
 .role-blocks { display: grid; gap: 18px; }
 .role-blocks > section { border: 1px solid var(--ink); background: var(--panel); }
+.role-drop-zone { scroll-margin-top: 18px; }
+.role-drop-zone:has(.empty-role-drop) { border-style: dashed; }
 .role-blocks > section > header { min-height: 76px; padding: 13px 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--ink); }
 .role-blocks header h3 { margin: 4px 0 0; font-size: 19px; }
 .role-blocks header small { font-family: var(--font-geist-mono); font-size: 8px; }
+.role-blocks header > div:first-child > span { display: block; margin-top: 4px; color: #4e5a56; font-size: 8px; }
 .role-blocks header > span { font-size: 10px; color: #4e5a56; }
 .block-header-actions { display: flex; align-items: center; gap: 10px; }
 .block-header-actions > span { font-size: 10px; color: #4e5a56; }
-.block-header-actions > button { border: 1px solid rgba(20,32,30,.35); background: rgba(255,255,255,.35); border-radius: 7px; padding: 7px 9px; font-size: 9px; font-weight: 700; cursor: pointer; }
+.block-header-actions > button, .block-header-actions > select { min-height: 31px; border: 1px solid rgba(20,32,30,.35); background: rgba(255,255,255,.55); border-radius: 7px; padding: 7px 9px; font-size: 8px; font-weight: 700; cursor: pointer; }
 .role-list button { width: 100%; min-height: 82px; border: 0; border-bottom: 1px solid var(--line); background: transparent; padding: 12px 16px; display: grid; grid-template-columns: 7px minmax(280px, 1fr) minmax(260px, 1fr) 20px; align-items: center; gap: 14px; text-align: left; cursor: pointer; }
 .role-list button:last-child { border-bottom: 0; }
 .role-list button:hover { background: #f1efe7; }
@@ -191,11 +211,14 @@ button { color: inherit; }
 .role-list strong { font-size: 13px; }
 .role-list p { color: var(--muted); font-size: 10px; line-height: 1.4; margin: 4px 0 0; max-width: 570px; }
 .role-list button > div > small { display: block; color: #5e6865; font-size: 8px; margin-top: 7px; font-weight: 650; }
+.role-list button > div > strong em { margin-left: 7px; padding: 3px 5px; border-radius: 99px; background: #e5e3da; color: #59615f; font-style: normal; font-size: 6px; text-transform: uppercase; letter-spacing: .08em; }
 .member-stack { display: flex; align-items: center; }
 .member-stack .avatar { margin-left: -6px; box-shadow: 0 0 0 2px var(--panel); }
 .member-stack .avatar:first-child { margin-left: 0; }
 .member-stack b { font-size: 9px; font-weight: 500; margin-left: 9px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.role-list em { font-style: normal; }
+.empty-role-drop { display: block !important; min-height: 74px !important; color: var(--muted); text-align: center !important; font-size: 9px; }
+.button.danger { border-color: #9f4a40; color: #8f3e35; background: #fff3f1; }
+.push-left { margin-right: auto; }
 .judging-legend { display: flex; gap: 7px; }
 .judging-legend span { padding: 5px 8px; border-radius: 99px; font-size: 8px; font-weight: 780; text-transform: uppercase; }
 .judging-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
@@ -491,6 +514,9 @@ button { color: inherit; }
   .stat-strip > div:nth-child(-n+2) { border-bottom: 1px solid var(--ink); }
   .warning-grid, .profile-grid { grid-template-columns: 1fr 1fr; }
   .judging-grid { grid-template-columns: 1fr; }
+  .roles-workspace { grid-template-columns: 1fr; }
+  .role-library { position: static; max-height: none; }
+  .role-library > div { max-height: 330px; }
   .roster-list article { grid-template-columns: auto 1fr 28px; }
   .person-groups { grid-column: 2; }
 }
@@ -529,7 +555,9 @@ button { color: inherit; }
   .people-summary .button { width: 100%; }
   .role-list button { grid-template-columns: 6px 1fr 20px; }
   .member-stack { grid-column: 2; }
-  .role-list button > em { grid-column: 3; grid-row: 1; }
+  .role-list button > span:last-child { grid-column: 3; grid-row: 1; }
+  .role-blocks > section > header { align-items: flex-start; gap: 10px; }
+  .block-header-actions { flex-wrap: wrap; justify-content: flex-end; }
   .judging-legend { margin-top: 16px; }
   .judging-slots { overflow-x: auto; }
   .judging-slots button { min-width: 82px; }
