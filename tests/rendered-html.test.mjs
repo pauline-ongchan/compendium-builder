@@ -20,6 +20,8 @@ test("ships Relay product metadata and removes the starter preview", async () =>
   assert.match(workspace, /Add from library/);
   assert.match(workspace, /Event modules/);
   assert.match(workspace, /Judging rooms/);
+  assert.match(workspace, /Prep mini-compendium/);
+  assert.match(workspace, /Prep availability/);
   assert.match(workspace, /Event home base/);
   assert.match(workspace, /Participant Registration/);
   assert.match(workspace, /Day-of essentials/);
