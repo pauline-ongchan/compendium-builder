@@ -298,7 +298,7 @@ function normalizeEvent(raw: EventState): EventState {
       ...person,
       phone: person.phone ?? "",
       email: person.email ?? "",
-      groupIds: person.groupIds?.length ? person.groupIds : groups.filter((group) => group.name === person.team).map((group) => group.id),
+      groupIds: person.groupIds?.length ? person.groupIds.slice(0, 1) : groups.filter((group) => group.name === person.team).slice(0, 1).map((group) => group.id),
       availability: Object.fromEntries(raw.days.map((day) => [
         day.id,
         Object.fromEntries(day.blocks.map((block) => [block.id, person.availability?.[day.id]?.[block.id] ?? "available"])),
@@ -405,18 +405,28 @@ export function RelayWorkspace() {
   const [showEventLibrary, setShowEventLibrary] = useState(false);
   const [showScheduleImport, setShowScheduleImport] = useState(false);
   const [showRoster, setShowRoster] = useState(false);
+  const [profilePersonId, setProfilePersonId] = useState<string | null>(null);
+  const [execPersonId, setExecPersonId] = useState("angela");
   const [toast, setToast] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("view") === "availability") {
+      setMode("exec");
+      setExecSection("availability");
+      if (params.get("person")) setExecPersonId(params.get("person")!);
+    }
     fetch("/api/event-state")
       .then((response) => response.ok ? response.json() : Promise.reject())
       .then((payload) => {
         const states = (payload.states ?? (payload.state ? [payload.state] : [])).map((state: EventState) => normalizeEvent(state));
         if (states.length) {
+          const requestedEventId = new URLSearchParams(window.location.search).get("event");
+          const initial = states.find((state: EventState) => state.eventId === requestedEventId) ?? states[0];
           setEventLibrary(states);
-          setData(states[0]);
-          setDayId(states[0].days[0].id);
+          setData(initial);
+          setDayId(initial.days[0].id);
         }
       })
       .catch(() => undefined)
@@ -437,7 +447,7 @@ export function RelayWorkspace() {
   };
 
   const activeDay = data.days.find((day) => day.id === dayId) ?? data.days[0];
-  const currentExec = data.people.find((person) => person.id === "angela") ?? data.people[0];
+  const currentExec = data.people.find((person) => person.id === execPersonId) ?? data.people[0];
   const activeAssignments = activeDay.assignments;
 
   const warnings = useMemo(() => {
@@ -580,7 +590,8 @@ export function RelayWorkspace() {
     next.groups = groups;
     next.people = people.map((person) => ({
       ...person,
-      team: groups.find((group) => person.groupIds.includes(group.id))?.name ?? person.team ?? "Unassigned",
+      groupIds: person.groupIds.slice(0, 1),
+      team: groups.find((group) => person.groupIds[0] === group.id)?.name ?? "Unassigned",
       availability: Object.fromEntries(next.days.map((day) => [day.id, Object.fromEntries(day.blocks.map((block) => [block.id, person.availability?.[day.id]?.[block.id] ?? "available"]))])),
     }));
     const validPeople = new Set(next.people.map((person) => person.id));
@@ -588,6 +599,31 @@ export function RelayWorkspace() {
     next.draftChanges += 1;
     setShowRoster(false);
     void save(next, "Event roster and groups updated.");
+  };
+
+  const saveProfile = (personId: string, preferences: string[], privateNote: string) => {
+    const next = structuredClone(data);
+    const person = next.people.find((item) => item.id === personId);
+    if (!person) return;
+    person.preferences = preferences;
+    person.privateNote = privateNote;
+    next.draftChanges += 1;
+    setProfilePersonId(null);
+    void save(next, `${person.name}’s preferences and private notes updated.`);
+  };
+
+  const shareAvailability = async () => {
+    const url = new URL(window.location.href);
+    url.search = "";
+    url.searchParams.set("view", "availability");
+    url.searchParams.set("event", data.eventId);
+    try {
+      await navigator.clipboard.writeText(url.toString());
+      setToast("Availability link copied. Send it to the event roster.");
+      window.setTimeout(() => setToast(""), 2400);
+    } catch {
+      window.prompt("Copy this availability link", url.toString());
+    }
   };
 
   const saveOverview = (resources: Resource[], contacts: ImportantContact[]) => {
@@ -646,7 +682,7 @@ export function RelayWorkspace() {
             </header>
 
             {section === "schedule" && <ScheduleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} warnings={warnings} covered={covered} required={required} onCell={(blockId, personId, assignmentId) => setDrawer({ blockId, personId, assignmentId })} onAddBlock={() => setBlockEditor({})} onImport={() => setShowScheduleImport(true)} onEditBlock={(blockId) => setBlockEditor({ blockId })} onDuplicateBlock={duplicateBlock} onDeleteBlock={deleteBlock} />}
-            {section === "people" && <PeopleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} onAvailability={(personId, blockId) => updateAvailability(personId, activeDay.id, blockId)} onManageRoster={() => setShowRoster(true)} />}
+            {section === "people" && <PeopleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} onAvailability={(personId, blockId) => updateAvailability(personId, activeDay.id, blockId)} onManageRoster={() => setShowRoster(true)} onShareAvailability={shareAvailability} onEditProfile={setProfilePersonId} />}
             {section === "roles" && <RolesView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} onOpen={(assignment) => setDrawer({ blockId: assignment.blockId, personId: assignment.personId, assignmentId: assignment.id })} onEditBlock={(blockId) => setBlockEditor({ blockId })} onDuplicateBlock={duplicateBlock} />}
             {section === "judging" && <JudgingView data={data} onCycle={cycleJudgingStatus} />}
             {section === "resources" && <ResourcesView data={data} onSave={saveOverview} />}
@@ -657,9 +693,10 @@ export function RelayWorkspace() {
           {showEventLibrary && <EventLibraryDialog events={eventLibrary} currentId={data.eventId} onClose={() => setShowEventLibrary(false)} onSwitch={switchEvent} onNew={() => { setShowEventLibrary(false); setShowNewEvent(true); }} />}
           {showScheduleImport && <ScheduleImportDialog day={activeDay} onClose={() => setShowScheduleImport(false)} onImport={importSchedule} />}
           {showRoster && <RosterDialog data={data} onClose={() => setShowRoster(false)} onSave={saveRoster} />}
+          {profilePersonId && <ProfileDialog person={data.people.find((person) => person.id === profilePersonId)!} onClose={() => setProfilePersonId(null)} onSave={saveProfile} />}
         </>
       ) : (
-        <ExecView data={data} person={currentExec} dayId={dayId} setDayId={setDayId} section={execSection} setSection={setExecSection} onAvailability={updateAvailability} onExit={() => setMode("director")} />
+        <ExecView data={data} person={currentExec} dayId={dayId} setDayId={setDayId} section={execSection} setSection={setExecSection} onAvailability={updateAvailability} onPersonChange={setExecPersonId} onExit={() => setMode("director")} />
       )}
       {toast ? <div className="toast" role="status"><span>✓</span>{toast}</div> : null}
     </div>
@@ -716,11 +753,11 @@ function ScheduleView({ data, activeDay, dayId, setDayId, warnings, covered, req
   </div>;
 }
 
-function PeopleView({ data, activeDay, dayId, setDayId, onAvailability, onManageRoster }: { data: EventState; activeDay: EventDay; dayId: string; setDayId: (id: string) => void; onAvailability: (personId: string, blockId: string) => void; onManageRoster: () => void }) {
+function PeopleView({ data, activeDay, dayId, setDayId, onAvailability, onManageRoster, onShareAvailability, onEditProfile }: { data: EventState; activeDay: EventDay; dayId: string; setDayId: (id: string) => void; onAvailability: (personId: string, blockId: string) => void; onManageRoster: () => void; onShareAvailability: () => void; onEditProfile: (personId: string) => void }) {
   return <div className="content"><div className="section-title compact"><div><span className="kicker">People</span><h2>Exec roster and availability</h2><p>Manage the event list and groups, then click a cell to update availability.</p></div><DayToggle data={data} dayId={dayId} setDayId={setDayId} /></div>
-    <div className="people-summary"><div><strong>{data.people.length}</strong><span>execs on this event</span></div><div><strong>{data.groups.length}</strong><span>groups</span></div><button className="button primary" onClick={onManageRoster}>Manage roster + groups</button></div>
+    <div className="people-summary"><div><strong>{data.people.length}</strong><span>execs on this event</span></div><div><strong>{data.groups.length}</strong><span>teams</span></div><div className="people-actions"><button className="button secondary" onClick={onShareAvailability}>Share availability</button><button className="button primary" onClick={onManageRoster}>Manage roster + teams</button></div></div>
     <section className="availability-card"><div className="availability-scroll"><div className="availability-grid" style={{ "--columns": activeDay.blocks.length } as React.CSSProperties}><div className="availability-corner">Exec</div>{activeDay.blocks.map((block) => <div className="availability-head" key={block.id}><strong>{block.short}</strong><small>{block.start}</small></div>)}{data.people.map((person) => <div className="availability-row" key={person.id}><div className="availability-person"><PersonAvatar person={person} small /><div><strong>{person.name}</strong><small>{person.team}</small></div></div>{activeDay.blocks.map((block) => { const status = person.availability[activeDay.id]?.[block.id] ?? "available"; return <button key={block.id} className={`availability-block ${status}`} onClick={() => onAvailability(person.id, block.id)}><span>{status === "available" ? "✓" : status === "conditional" ? "~" : "×"}</span></button>; })}</div>)}</div></div></section>
-    <section className="profile-notes"><div className="subhead"><div><span className="kicker">Reusable knowledge</span><h3>Preferences and private notes</h3></div></div><div className="profile-grid">{data.people.slice(0, 6).map((person) => <article key={person.id}><div className="profile-title"><PersonAvatar person={person} /><div><h4>{person.name}</h4><p>{person.team}</p></div></div><div className="tag-row">{person.preferences.map((preference) => <span key={preference}>{preference}</span>)}</div><p className="private-note"><b>Private</b>{person.privateNote}</p></article>)}</div></section>
+    <section className="profile-notes"><div className="subhead"><div><span className="kicker">Reusable knowledge</span><h3>Preferences and private notes</h3></div></div><div className="profile-grid">{data.people.map((person) => <article key={person.id}><div className="profile-title"><PersonAvatar person={person} /><div><h4>{person.name}</h4><p>{person.team}</p></div><button onClick={() => onEditProfile(person.id)}>Edit</button></div><div className="tag-row">{person.preferences.length ? person.preferences.map((preference) => <span key={preference}>{preference}</span>) : <span>No preferences yet</span>}</div><p className="private-note"><b>Private</b>{person.privateNote || "No private notes yet."}</p></article>)}</div></section>
   </div>;
 }
 
@@ -808,15 +845,15 @@ function RosterDialog({ data, onClose, onSave }: { data: EventState; onClose: ()
     const nextGroups = structuredClone(groups);
     const imported = importText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line, index) => {
       const [name = "", phone = "", email = "", groupNames = ""] = line.split(/\t|\s*,\s*/);
-      const requestedGroups = groupNames.split(/[;+]/).map((item) => item.trim()).filter(Boolean);
-      const groupIds = requestedGroups.map((groupName) => {
+      const requestedGroup = groupNames.split(/[;+]/).map((item) => item.trim()).find(Boolean);
+      const groupIds = requestedGroup ? [requestedGroup].map((groupName) => {
         let group = nextGroups.find((item) => item.name.toLowerCase() === groupName.toLowerCase());
         if (!group) {
           group = { id: `${groupName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Date.now()}-${index}`, name: groupName, color: colorWheel[index % colorWheel.length] };
           nextGroups.push(group);
         }
         return group.id;
-      });
+      }) : [];
       const id = `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "exec"}-${Date.now()}-${index}`;
       return { id, name, initials: initialsFor(name), team: nextGroups.find((group) => groupIds.includes(group.id))?.name ?? "Unassigned", color: colorWheel[index % colorWheel.length], preferences: [], privateNote: "", phone, email, groupIds, availability: {} } satisfies Person;
     }).filter((person) => person.name);
@@ -824,7 +861,13 @@ function RosterDialog({ data, onClose, onSave }: { data: EventState; onClose: ()
     setPeople((current) => [...current, ...imported.filter((person) => !current.some((existing) => Boolean(existing.email) && existing.email.toLowerCase() === person.email.toLowerCase() || existing.name.toLowerCase() === person.name.toLowerCase()))]);
     setImportText("");
   };
-  return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog roster-dialog" role="dialog" aria-modal="true" aria-label="Manage event roster"><header><div><span className="kicker">Current event</span><h2>Exec roster and groups</h2><p>Import a list, choose who belongs to this event, and update group membership.</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="roster-body"><section className="roster-import"><label>Import exec list<textarea rows={4} value={importText} onChange={(event) => setImportText(event.target.value)} placeholder={`Name, phone, email, group\nAlex Chen, 604-555-0100, alex@example.com, Development`} /></label><button className="button secondary" disabled={!importText.trim()} onClick={importRoster}>Add imported execs</button></section><section><div className="form-section-head"><div><h3>Groups</h3><p>An exec can belong to more than one group.</p></div><div className="inline-field"><input value={newGroup} onChange={(event) => setNewGroup(event.target.value)} placeholder="New group" /><button onClick={() => { addGroup(newGroup); setNewGroup(""); }}>Add</button></div></div><div className="group-chip-list">{groups.map((group) => <span style={{ background: group.color }} key={group.id}>{group.name}<button onClick={() => { setGroups((current) => current.filter((item) => item.id !== group.id)); setPeople((current) => current.map((person) => ({ ...person, groupIds: person.groupIds.filter((id) => id !== group.id) }))); }} aria-label={`Remove ${group.name}`}>×</button></span>)}</div></section><section><div className="form-section-head"><div><h3>{people.length} execs on this event</h3><p>Edit details or remove someone from this event only.</p></div><button onClick={addPerson}>+ Add exec</button></div><div className="roster-list">{people.map((person) => <article key={person.id}><PersonAvatar person={person} /><div className="roster-fields"><input value={person.name} aria-label="Name" onChange={(event) => updatePerson(person.id, { name: event.target.value, initials: initialsFor(event.target.value) })} /><input value={person.phone} aria-label="Phone" placeholder="Phone" onChange={(event) => updatePerson(person.id, { phone: event.target.value })} /><input value={person.email} aria-label="Email" placeholder="Email" onChange={(event) => updatePerson(person.id, { email: event.target.value })} /></div><div className="person-groups">{groups.map((group) => <label key={group.id}><input type="checkbox" checked={person.groupIds.includes(group.id)} onChange={(event) => updatePerson(person.id, { groupIds: event.target.checked ? [...person.groupIds, group.id] : person.groupIds.filter((id) => id !== group.id) })} />{group.name}</label>)}</div><button className="remove-row" onClick={() => setPeople((current) => current.filter((item) => item.id !== person.id))} aria-label={`Remove ${person.name}`}>×</button></article>)}</div></section></div><footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!people.some((person) => person.name.trim())} onClick={() => onSave(people.filter((person) => person.name.trim()), groups)}>Save event roster</button></footer></section></div>;
+  return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog roster-dialog" role="dialog" aria-modal="true" aria-label="Manage event roster"><header><div><span className="kicker">Current event</span><h2>Exec roster and teams</h2><p>Import a list, choose who belongs to this event, and assign exactly one team per person.</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="roster-body"><section className="roster-import"><label>Import exec list<textarea rows={4} value={importText} onChange={(event) => setImportText(event.target.value)} placeholder={`Name, phone, email, team\nAlex Chen, 604-555-0100, alex@example.com, Development`} /></label><button className="button secondary" disabled={!importText.trim()} onClick={importRoster}>Add imported execs</button></section><section><div className="form-section-head"><div><h3>Teams</h3><p>Each exec can belong to one team at a time.</p></div><div className="inline-field"><input value={newGroup} onChange={(event) => setNewGroup(event.target.value)} placeholder="New team" /><button onClick={() => { addGroup(newGroup); setNewGroup(""); }}>Add</button></div></div><div className="group-chip-list">{groups.map((group) => <span style={{ background: group.color }} key={group.id}>{group.name}<button onClick={() => { setGroups((current) => current.filter((item) => item.id !== group.id)); setPeople((current) => current.map((person) => ({ ...person, groupIds: person.groupIds.filter((id) => id !== group.id) }))); }} aria-label={`Remove ${group.name}`}>×</button></span>)}</div></section><section><div className="form-section-head"><div><h3>{people.length} execs on this event</h3><p>Edit details, choose one team, or remove someone from this event only.</p></div><button onClick={addPerson}>+ Add exec</button></div><div className="roster-list">{people.map((person) => <article key={person.id}><PersonAvatar person={person} /><div className="roster-fields"><input value={person.name} aria-label="Name" onChange={(event) => updatePerson(person.id, { name: event.target.value, initials: initialsFor(event.target.value) })} /><input value={person.phone} aria-label="Phone" placeholder="Phone" onChange={(event) => updatePerson(person.id, { phone: event.target.value })} /><input value={person.email} aria-label="Email" placeholder="Email" onChange={(event) => updatePerson(person.id, { email: event.target.value })} /></div><label className="person-team"><span>Team</span><select value={person.groupIds[0] ?? ""} onChange={(event) => updatePerson(person.id, { groupIds: event.target.value ? [event.target.value] : [] })}><option value="">Unassigned</option>{groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label><button className="remove-row" onClick={() => setPeople((current) => current.filter((item) => item.id !== person.id))} aria-label={`Remove ${person.name}`}>×</button></article>)}</div></section></div><footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!people.some((person) => person.name.trim())} onClick={() => onSave(people.filter((person) => person.name.trim()), groups)}>Save event roster</button></footer></section></div>;
+}
+
+function ProfileDialog({ person, onClose, onSave }: { person: Person; onClose: () => void; onSave: (personId: string, preferences: string[], privateNote: string) => void }) {
+  const [preferences, setPreferences] = useState(person.preferences.join(", "));
+  const [privateNote, setPrivateNote] = useState(person.privateNote);
+  return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog profile-dialog" role="dialog" aria-modal="true" aria-label={`Edit ${person.name}`}><header><div><span className="kicker">People profile</span><h2>{person.name}</h2><p>Preferences improve assignment suggestions. Private notes stay in the director workspace.</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="setup-form"><label>Role preferences<input value={preferences} onChange={(event) => setPreferences(event.target.value)} placeholder="Food Team, Participant Care" /><small>Separate preferences with commas.</small></label><label>Private notes<textarea rows={6} value={privateNote} onChange={(event) => setPrivateNote(event.target.value)} placeholder="Director-only context, accommodations, or assignment notes" /></label></div><footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" onClick={() => onSave(person.id, preferences.split(",").map((item) => item.trim()).filter(Boolean), privateNote.trim())}>Save profile</button></footer></section></div>;
 }
 
 function BlockEditor({ data, day, blockId, onClose, onSave }: { data: EventState; day: EventDay; blockId?: string; onClose: () => void; onSave: (block: EventBlock) => void }) {
@@ -868,7 +911,7 @@ function AssignmentDrawer({ data, day, drawer, onClose, onSave }: { data: EventS
   return <div className="drawer-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><aside className="assignment-drawer" role="dialog" aria-modal="true" aria-label="Edit assignment"><header><div><span className="kicker">{existing ? "Edit assignment" : "New assignment"}</span><h2>{block.label}</h2><p>{block.start}–{block.end}{block.location ? ` · ${block.location}` : ""}</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="drawer-body"><label>Role<select value={role} onChange={(event) => selectRole(event.target.value)}>{availableRoles.map((item) => <option value={item.name} key={item.id}>{item.name}</option>)}{!availableRoles.some((item) => item.name === role) ? <option value={role}>{role}</option> : null}</select></label><label>Role lead<select value={leadPersonId} onChange={(event) => setLeadPersonId(event.target.value)}><option value="">Event Directors</option>{data.people.map((person) => <option value={person.id} key={person.id}>{person.name}</option>)}</select></label><div className="field"><span>Intensity</span><div className="intensity-toggle">{(["Low", "Medium", "High"] as const).map((item) => <button type="button" className={intensity === item ? "active" : ""} onClick={() => setIntensity(item)} key={item}>{item}</button>)}</div></div><label>Instructions<textarea rows={5} value={description} onChange={(event) => setDescription(event.target.value)} /></label>{!existing ? <div className="assign-mode"><button className={assignMode === "person" ? "active" : ""} onClick={() => setAssignMode("person")}>One exec</button><button className={assignMode === "group" ? "active" : ""} onClick={() => setAssignMode("group")}>Available group</button></div> : null}{assignMode === "group" && !existing ? <div className="group-assignment"><label>Exec group<select value={groupId} onChange={(event) => setGroupId(event.target.value)}>{data.groups.map((group) => <option value={group.id} key={group.id}>{group.name}</option>)}</select></label><p><strong>{groupCandidates.length}</strong> available member{groupCandidates.length === 1 ? "" : "s"} will be assigned. Conditional and unavailable members are skipped; individual assignments can still be changed afterward.</p><div className="group-preview">{groupCandidates.map(({ person }) => <span key={person.id}><PersonAvatar person={person} small />{person.name}</span>)}</div></div> : <><div className="candidate-head"><span>Assign to</span><small>Sorted by availability and fit</small></div><label className="candidate-search"><span>Search execs</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by name, group, or preference…" /></label><div className="candidate-list">{candidates.map(({ person, fit }, index) => <button type="button" className={personId === person.id ? "selected" : ""} key={person.id} onClick={() => setPersonId(person.id)}><PersonAvatar person={person} /><div><strong>{person.name}{index === 0 && !search ? <em>Top fit</em> : null}</strong><small>{fit.reason}</small></div><span className={`candidate-status ${fit.status}`}>{fit.status}</span></button>)}</div></>}</div><footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={assignMode === "group" && !groupCandidates.length} onClick={() => onSave({ personIds: assignMode === "group" && !existing ? groupCandidates.map(({ person }) => person.id) : [personId], role, lead, leadPersonId, description, intensity })}>{assignMode === "group" && !existing ? `Assign ${groupCandidates.length} execs` : "Save assignment"}</button></footer></aside></div>;
 }
 
-function ExecView({ data, person, dayId, setDayId, section, setSection, onAvailability, onExit }: { data: EventState; person: Person; dayId: string; setDayId: (id: string) => void; section: ExecSection; setSection: (section: ExecSection) => void; onAvailability: (personId: string, dayId: string, blockId: string) => void; onExit: () => void }) {
+function ExecView({ data, person, dayId, setDayId, section, setSection, onAvailability, onPersonChange, onExit }: { data: EventState; person: Person; dayId: string; setDayId: (id: string) => void; section: ExecSection; setSection: (section: ExecSection) => void; onAvailability: (personId: string, dayId: string, blockId: string) => void; onPersonChange: (personId: string) => void; onExit: () => void }) {
   const day = data.days.find((item) => item.id === dayId) ?? data.days[0];
   const assignments = day.assignments.filter((assignment) => assignment.personId === person.id);
   const next = assignments[0];
@@ -877,7 +920,7 @@ function ExecView({ data, person, dayId, setDayId, section, setSection, onAvaila
   return <div className="exec-app"><header className="exec-header"><button className="exec-brand" onClick={() => setSection("today")}><span>R</span> relay</button><div><button className="icon-button" aria-label="Notifications">•<span /></button><button className="exec-profile"><PersonAvatar person={person} /><span>{person.name}</span></button><button className="exit-preview" onClick={onExit}>Exit preview</button></div></header><main>
     {section === "today" && <><section className="exec-welcome"><div><span className="kicker">Good morning, {person.name}</span><h1>My day</h1><p>{day.date} · {data.venue}</p></div><DayToggle data={data} dayId={dayId} setDayId={setDayId} /></section>{next && nextBlock ? <section className="next-card"><div className="next-time"><span>NEXT UP</span><strong>{nextBlock.start}</strong><small>{nextBlock.end}</small></div><div className="next-main"><span className="role-label" style={{ background: next.color }}>{next.role}</span><h2>{nextBlock.label}</h2><p className="next-place">{nextBlock.location ? `⌖ ${nextBlock.location} · ` : ""}Lead: {assignmentLeadName(next, data.people)}</p><p>{next.description}</p><div className="next-people"><span>With</span>{day.assignments.filter((a) => a.blockId === next.blockId && a.role === next.role && a.personId !== person.id).slice(0, 3).map((a) => <PersonAvatar key={a.id} small person={data.people.find((p) => p.id === a.personId)!} />)}</div></div><button className="acknowledge">✓ I’m ready</button></section> : null}<section className="my-day"><div className="subhead"><div><span className="kicker">Itinerary</span><h3>{assignments.length} roles today</h3></div><button className="text-button" onClick={() => setSection("schedule")}>Whole event →</button></div><div className="itinerary">{assignments.map((assignment, index) => { const block = day.blocks.find((item) => item.id === assignment.blockId)!; return <article key={assignment.id} className={index === 0 ? "current" : ""}><div className="itinerary-time"><strong>{block.start}</strong><span>{block.end}</span></div><i style={{ background: assignment.color }} /><div><span>{block.label}</span><h4>{assignment.role}</h4><p>{block.location ? `${block.location} · ` : ""}{assignmentLeadName(assignment, data.people)}</p></div><button aria-label={`Open ${assignment.role}`}>→</button></article>; })}</div></section><section className="quick-links"><div className="subhead"><div><span className="kicker">Event overview</span><h3>Important links</h3></div><button className="text-button" onClick={() => setSection("overview")}>View all →</button></div><div>{data.resources.slice(0, 4).map((resource) => <a href={resource.url} key={resource.id}><span>{resource.group.slice(0, 2).toUpperCase()}</span><strong>{resource.label}</strong><b>↗</b></a>)}</div></section></>}
     {section === "schedule" && <section className="exec-full-schedule"><span className="kicker">Published schedule</span><h1>Event schedule</h1><p>Every block, role, and assignment.</p>{data.days.map((scheduleDay) => <section className="exec-schedule-day" key={scheduleDay.id}><header><span>{scheduleDay.label}</span><h2>{scheduleDay.date}</h2></header><div>{scheduleDay.blocks.map((block) => { const assignmentsForBlock = scheduleDay.assignments.filter((assignment) => assignment.blockId === block.id); return <article key={block.id}><div className="full-schedule-time" style={{ background: block.color }}><strong>{block.start}</strong><span>{block.end}</span></div><div className="full-schedule-main"><span>{block.location || "Location not set"}</span><h3>{block.label}</h3><div className="full-role-list">{blockRoles(block).map((role) => { const roleAssignments = assignmentsForBlock.filter((assignment) => assignment.role === role.name); const lead = data.people.find((item) => item.id === role.leadPersonId); return <div key={role.id}><strong>{role.name}</strong><span>Lead: {lead?.name ?? (roleAssignments[0] ? assignmentLeadName(roleAssignments[0], data.people) : "TBD")}</span><small>{roleAssignments.map((assignment) => data.people.find((item) => item.id === assignment.personId)?.name).filter(Boolean).join(", ") || "Team not assigned"}</small></div>; })}</div></div></article>; })}</div></section>)}</section>}
-    {section === "availability" && <section className="exec-availability"><span className="kicker">Your availability</span><h1>When can you be there?</h1><p>Complete the entire event schedule below. Tap each block to cycle between available, conditional, and unavailable.</p>{data.days.map((availabilityDay) => <section className="availability-day" key={availabilityDay.id}><header><span>{availabilityDay.label}</span><h2>{availabilityDay.date}</h2></header><div className="exec-availability-list">{availabilityDay.blocks.map((block) => { const status = person.availability[availabilityDay.id]?.[block.id] ?? "available"; return <button className={status} key={block.id} onClick={() => onAvailability(person.id, availabilityDay.id, block.id)}><div><strong>{block.start}</strong><span>{block.end}</span></div><div><h3>{block.label}</h3><p>{block.location}</p></div><b>{status === "available" ? "Available" : status === "conditional" ? "Conditional" : "Unavailable"}</b></button>; })}</div></section>)}<label className="availability-note">Anything we should know?<textarea rows={4} defaultValue="Please avoid back-to-back physical roles after lunch if possible." /></label><button className="button primary full">Save availability</button></section>}
+    {section === "availability" && <section className="exec-availability"><span className="kicker">Your availability</span><h1>When can you be there?</h1><p>Choose your name, then tap each block to cycle between available, conditional, and unavailable. Changes save automatically.</p><label className="availability-person-picker">I am<select value={person.id} onChange={(event) => onPersonChange(event.target.value)}>{data.people.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name} · {candidate.team}</option>)}</select></label>{data.days.map((availabilityDay) => <section className="availability-day" key={availabilityDay.id}><header><span>{availabilityDay.label}</span><h2>{availabilityDay.date}</h2></header><div className="exec-availability-list">{availabilityDay.blocks.map((block) => { const status = person.availability[availabilityDay.id]?.[block.id] ?? "available"; return <button className={status} key={block.id} onClick={() => onAvailability(person.id, availabilityDay.id, block.id)}><div><strong>{block.start}</strong><span>{block.end}</span></div><div><h3>{block.label}</h3><p>{block.location}</p></div><b>{status === "available" ? "Available" : status === "conditional" ? "Conditional" : "Unavailable"}</b></button>; })}</div></section>)}</section>}
     {section === "overview" && <section className="exec-overview"><span className="kicker">Shared reference</span><h1>Event overview</h1><p>Important documents and people for {data.eventName}.</p><div className="overview-grid"><section className="overview-panel"><header><span>↗</span><div><h3>Documents</h3><p>{data.resources.length} links</p></div></header>{Array.from(new Set(data.resources.map((resource) => resource.group))).map((group) => <div className="overview-group" key={group}><h4>{group}</h4>{data.resources.filter((resource) => resource.group === group).map((resource) => <a href={resource.url} key={resource.id}><span>{resource.label}</span><b>Open ↗</b></a>)}</div>)}</section><section className="overview-panel"><header><span>☎</span><div><h3>Important people</h3><p>{data.contacts.length} contacts</p></div></header><div className="contact-list">{data.contacts.map((contact) => <a href={`tel:${contact.phone}`} key={contact.id}><div><strong>{contact.name}</strong><span>{contact.role}</span></div><b>{contact.phone}</b></a>)}</div></section></div></section>}
     {section === "directory" && <section className="exec-directory"><span className="kicker">Role directory</span><h1>Role instructions</h1><p>Instructions from the published schedule.</p><div className="directory-list">{eventRoles.map(({ role, block }) => { const lead = data.people.find((item) => item.id === role.leadPersonId); return <details key={role.name}><summary><i style={{ background: roleColor(role.name) }} /><span>{role.name}</span><b>+</b></summary><p>{role.description} Lead: {lead?.name ?? "TBD"}. First used in {block}.</p></details>; })}</div>{!eventRoles.length ? <p>No roles have been added to the schedule yet.</p> : null}</section>}
   </main><nav className="exec-nav" aria-label="Exec navigation">{(["today", "schedule", "availability", "overview", "directory"] as ExecSection[]).map((item) => <button key={item} className={section === item ? "active" : ""} onClick={() => setSection(item)}><span>{item === "today" ? "◷" : item === "schedule" ? "▤" : item === "availability" ? "▦" : item === "overview" ? "↗" : "≡"}</span>{item === "today" ? "My day" : item[0].toUpperCase() + item.slice(1)}</button>)}</nav></div>;
