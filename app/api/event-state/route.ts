@@ -1,4 +1,5 @@
 import { desc } from "drizzle-orm";
+import { mapTimeAvailabilityToBlocks, type AvailabilityState } from "../../availability";
 import { ensureDb, getDb } from "../../../db";
 import { eventStates } from "../../../db/schema";
 
@@ -19,12 +20,16 @@ export async function GET() {
 export async function PUT(request: Request) {
   try {
     const state = await request.json();
-    if (!state || typeof state !== "object" || typeof state.eventId !== "string" || typeof state.eventName !== "string" || !Array.isArray(state.days)) {
+    if (!state || typeof state !== "object" || typeof state.eventId !== "string" || typeof state.eventName !== "string" || !Array.isArray(state.days) || !Array.isArray(state.people)) {
       return Response.json({ error: "Invalid event state" }, { status: 400 });
     }
+    mapTimeAvailabilityToBlocks(state as AvailabilityState);
     await ensureDb();
     const payload = JSON.stringify(state);
-    const updatedBy = request.headers.get("oai-authenticated-user-email") ?? "local-director";
+    const updatedBy =
+      request.headers.get("x-relay-user") ??
+      request.headers.get("oai-authenticated-user-email") ??
+      "relay-director";
     await getDb().insert(eventStates).values({ id: state.eventId, payload, updatedBy }).onConflictDoUpdate({
       target: eventStates.id,
       set: { payload, updatedBy, updatedAt: new Date().toISOString() },

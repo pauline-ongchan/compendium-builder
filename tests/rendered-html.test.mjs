@@ -15,6 +15,8 @@ test("ships Relay product metadata and removes the starter preview", async () =>
   assert.match(workspace, /Import from Google Docs/);
   assert.match(workspace, /Exec roster and teams/);
   assert.match(workspace, /Share availability/);
+  assert.match(workspace, /When are you free/);
+  assert.match(workspace, /mapped automatically to the current schedule blocks/);
   assert.match(workspace, /Preferences and private notes/);
   assert.match(workspace, /Role library/);
   assert.match(workspace, /Add from library/);
