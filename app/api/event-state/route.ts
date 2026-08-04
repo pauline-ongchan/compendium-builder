@@ -26,7 +26,10 @@ export async function PUT(request: Request) {
     mapTimeAvailabilityToBlocks(state as AvailabilityState);
     await ensureDb();
     const payload = JSON.stringify(state);
-    const updatedBy = request.headers.get("oai-authenticated-user-email") ?? "local-director";
+    const updatedBy =
+      request.headers.get("x-relay-user") ??
+      request.headers.get("oai-authenticated-user-email") ??
+      "relay-director";
     await getDb().insert(eventStates).values({ id: state.eventId, payload, updatedBy }).onConflictDoUpdate({
       target: eventStates.id,
       set: { payload, updatedBy, updatedAt: new Date().toISOString() },
