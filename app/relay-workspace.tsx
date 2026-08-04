@@ -266,6 +266,22 @@ function blockRoles(block: EventBlock): BlockRole[] {
   }));
 }
 
+function timeToMinutes(value: string) {
+  const match = value.trim().match(/^(\d{1,2})(?::(\d{2}))?\s*([AP]M)?/i);
+  if (!match) return Number.MAX_SAFE_INTEGER;
+  let hour = Number(match[1]);
+  const minute = Number(match[2] ?? 0);
+  const meridiem = match[3]?.toUpperCase();
+  if (meridiem === "AM" && hour === 12) hour = 0;
+  if (meridiem === "PM" && hour !== 12) hour += 12;
+  if (!meridiem && hour >= 1 && hour <= 6) hour += 12;
+  return hour * 60 + minute;
+}
+
+function sortBlocks(blocks: EventBlock[]) {
+  return [...blocks].sort((a, b) => timeToMinutes(a.start) - timeToMinutes(b.start) || timeToMinutes(a.end) - timeToMinutes(b.end) || a.label.localeCompare(b.label));
+}
+
 function normalizeEvent(raw: EventState): EventState {
   const eventId = raw.eventId || "productx-2026";
   const legacyGroups = Array.from(new Set((raw.people ?? []).map((person) => person.team).filter(Boolean))).map((name, index) => ({
@@ -290,7 +306,7 @@ function normalizeEvent(raw: EventState): EventState {
     })),
     days: raw.days.map((day) => ({
       ...day,
-      blocks: day.blocks.map((block) => ({ ...block, roles: blockRoles(block), links: block.links ?? [] })),
+      blocks: sortBlocks(day.blocks.map((block) => ({ ...block, roles: blockRoles(block), links: block.links ?? [] }))),
     })),
   };
 }
@@ -499,7 +515,7 @@ export function RelayWorkspace() {
     const existingIndex = day.blocks.findIndex((item) => item.id === block.id);
     if (existingIndex >= 0) day.blocks[existingIndex] = block;
     else day.blocks.push(block);
-    day.blocks.sort((a, b) => a.start.localeCompare(b.start));
+    day.blocks = sortBlocks(day.blocks);
     for (const person of next.people) {
       person.availability[day.id] ??= {};
       person.availability[day.id][block.id] ??= "available";
@@ -530,14 +546,26 @@ export function RelayWorkspace() {
     void save(next, `${source.label} duplicated with its roles and instructions.`);
   };
 
+  const deleteBlock = (blockId: string) => {
+    const block = activeDay.blocks.find((item) => item.id === blockId);
+    if (!block || !window.confirm(`Delete “${block.label}”? Its assignments and availability responses for this block will also be removed.`)) return;
+    const next = structuredClone(data);
+    const day = next.days.find((item) => item.id === dayId)!;
+    day.blocks = day.blocks.filter((item) => item.id !== blockId);
+    day.assignments = day.assignments.filter((assignment) => assignment.blockId !== blockId);
+    for (const person of next.people) delete person.availability[day.id]?.[blockId];
+    next.draftChanges += 1;
+    void save(next, `${block.label} deleted from the schedule.`);
+  };
+
   const importSchedule = (blocks: EventBlock[], replace: boolean) => {
     const next = structuredClone(data);
     const day = next.days.find((item) => item.id === dayId)!;
     if (replace) {
-      day.blocks = blocks;
+      day.blocks = sortBlocks(blocks);
       day.assignments = [];
     } else {
-      day.blocks.push(...blocks);
+      day.blocks = sortBlocks([...day.blocks, ...blocks]);
     }
     for (const person of next.people) {
       person.availability[day.id] = Object.fromEntries(day.blocks.map((block) => [block.id, person.availability[day.id]?.[block.id] ?? "available"]));
@@ -617,7 +645,7 @@ export function RelayWorkspace() {
               <div className="header-actions"><span className={`save-state ${saving ? "saving" : ""}`}>{saving ? "Saving…" : hydrated ? "All changes saved" : "Connecting…"}</span><button className="button secondary" onClick={() => setShowNewEvent(true)}>+ New event</button><button className="button secondary" onClick={() => setMode("exec")}>Exec view</button><button className="button primary" onClick={publish} disabled={data.draftChanges === 0}>Publish {data.draftChanges ? `${data.draftChanges} changes` : "changes"}</button></div>
             </header>
 
-            {section === "schedule" && <ScheduleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} warnings={warnings} covered={covered} required={required} onCell={(blockId, personId, assignmentId) => setDrawer({ blockId, personId, assignmentId })} onAddBlock={() => setBlockEditor({})} onImport={() => setShowScheduleImport(true)} onEditBlock={(blockId) => setBlockEditor({ blockId })} onDuplicateBlock={duplicateBlock} />}
+            {section === "schedule" && <ScheduleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} warnings={warnings} covered={covered} required={required} onCell={(blockId, personId, assignmentId) => setDrawer({ blockId, personId, assignmentId })} onAddBlock={() => setBlockEditor({})} onImport={() => setShowScheduleImport(true)} onEditBlock={(blockId) => setBlockEditor({ blockId })} onDuplicateBlock={duplicateBlock} onDeleteBlock={deleteBlock} />}
             {section === "people" && <PeopleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} onAvailability={(personId, blockId) => updateAvailability(personId, activeDay.id, blockId)} onManageRoster={() => setShowRoster(true)} />}
             {section === "roles" && <RolesView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} onOpen={(assignment) => setDrawer({ blockId: assignment.blockId, personId: assignment.personId, assignmentId: assignment.id })} onEditBlock={(blockId) => setBlockEditor({ blockId })} onDuplicateBlock={duplicateBlock} />}
             {section === "judging" && <JudgingView data={data} onCycle={cycleJudgingStatus} />}
@@ -642,8 +670,17 @@ function DayToggle({ data, dayId, setDayId }: { data: EventState; dayId: string;
   return <div className="day-toggle" aria-label="Event day">{data.days.map((day) => <button key={day.id} className={dayId === day.id ? "active" : ""} onClick={() => setDayId(day.id)}>{day.label}<small>{day.date.replace(/^[A-Za-z]+, /, "")}</small></button>)}</div>;
 }
 
-function ScheduleView({ data, activeDay, dayId, setDayId, warnings, covered, required, onCell, onAddBlock, onImport, onEditBlock, onDuplicateBlock }: { data: EventState; activeDay: EventDay; dayId: string; setDayId: (id: string) => void; warnings: { level: string; title: string; detail: string }[]; covered: number; required: number; onCell: (blockId: string, personId: string, assignmentId?: string) => void; onAddBlock: () => void; onImport: () => void; onEditBlock: (blockId: string) => void; onDuplicateBlock: (blockId: string) => void }) {
+function ScheduleView({ data, activeDay, dayId, setDayId, warnings, covered, required, onCell, onAddBlock, onImport, onEditBlock, onDuplicateBlock, onDeleteBlock }: { data: EventState; activeDay: EventDay; dayId: string; setDayId: (id: string) => void; warnings: { level: string; title: string; detail: string }[]; covered: number; required: number; onCell: (blockId: string, personId: string, assignmentId?: string) => void; onAddBlock: () => void; onImport: () => void; onEditBlock: (blockId: string) => void; onDuplicateBlock: (blockId: string) => void; onDeleteBlock: (blockId: string) => void }) {
   if (!activeDay.blocks.length) return <div className="content schedule-content"><div className="section-title"><div><span className="kicker">Schedule</span><h2>Add the event schedule</h2><p>Import a day from Google Docs or add blocks manually. Locations can be filled in later.</p></div><DayToggle data={data} dayId={dayId} setDayId={setDayId} /></div><section className="empty-builder"><span>01</span><h3>No blocks yet</h3><p>Paste a table or time-based schedule from the planning document.</p><div className="empty-actions"><button className="button primary" onClick={onImport}>Import from Google Docs</button><button className="button secondary" onClick={onAddBlock}>+ Add block</button></div></section></div>;
+  const blocks = sortBlocks(activeDay.blocks);
+  const timeframes = blocks.reduce<{ start: string; end: string; blocks: EventBlock[] }[]>((groups, block) => {
+    const current = groups.at(-1);
+    if (current && timeToMinutes(current.start) === timeToMinutes(block.start)) {
+      current.blocks.push(block);
+      if (timeToMinutes(block.end) > timeToMinutes(current.end)) current.end = block.end;
+    } else groups.push({ start: block.start, end: block.end, blocks: [block] });
+    return groups;
+  }, []);
   return <div className="content schedule-content">
     <div className="section-title"><div><span className="kicker">Schedule</span><h2>{activeDay.label}</h2><p>Assign people, review coverage, or edit a block.</p></div><div className="schedule-actions"><DayToggle data={data} dayId={dayId} setDayId={setDayId} /><button className="button secondary" onClick={onImport}>Import Google Doc</button><button className="button secondary" onClick={onAddBlock}>+ Add block</button></div></div>
     <div className="stat-strip">
@@ -653,18 +690,22 @@ function ScheduleView({ data, activeDay, dayId, setDayId, warnings, covered, req
       <div className="publish-card"><span>Published plan</span><strong>{data.draftChanges ? `${data.draftChanges} edits ahead` : "Up to date"}</strong><small>Last publish {data.publishedAt}</small></div>
     </div>
     <section className="board-card">
-      <div className="board-toolbar"><div><strong>{activeDay.date}</strong><span>{activeDay.blocks[0].start} AM – {activeDay.blocks.at(-1)?.end} PM</span></div><div className="legend"><span><i className="legend-dot available" />Available</span><span><i className="legend-dot conditional" />Conditional</span><span><i className="legend-dot conflict" />Conflict</span></div></div>
+      <div className="board-toolbar"><div><strong>{activeDay.date}</strong><span>{blocks[0].start} – {blocks.reduce((latest, block) => timeToMinutes(block.end) > timeToMinutes(latest) ? block.end : latest, blocks[0].end)}</span></div><div className="legend"><span><i className="legend-dot available" />Available</span><span><i className="legend-dot conditional" />Conditional</span><span><i className="legend-dot conflict" />Conflict</span></div></div>
       <div className="timeline-scroll">
-        <div className="timeline" style={{ "--columns": activeDay.blocks.length } as React.CSSProperties}>
+        <div className="timeline" style={{ "--columns": blocks.length } as React.CSSProperties}>
           <div className="timeline-corner">Person</div>
-          {activeDay.blocks.map((block) => <div className="block-head-wrap" key={block.id} style={{ background: block.color }}><button className="block-head" onClick={() => onEditBlock(block.id)} aria-label={`Edit ${block.label}`}><small>{block.start}–{block.end}</small><strong>{block.label}</strong><span>{block.location || "Location not set"}</span></button><button className="duplicate-block" onClick={() => onDuplicateBlock(block.id)} aria-label={`Duplicate ${block.label}`} title="Duplicate block">⧉</button></div>)}
+          {timeframes.map((timeframe) => <div className="timeframe-head" key={`${timeframe.start}-${timeframe.end}`} style={{ gridColumn: `span ${timeframe.blocks.length}` }}><strong>{timeframe.start}–{timeframe.end}</strong><span>{timeframe.blocks.length > 1 ? `${timeframe.blocks.length} concurrent events` : "1 event"}</span></div>)}
+          {blocks.map((block) => <div className="block-head-wrap" key={block.id} style={{ background: block.color }}><button className="block-head" onClick={() => onEditBlock(block.id)} aria-label={`Edit ${block.label}`}><strong>{block.label}</strong><span>{block.location || "Location not set"}</span></button><button className="duplicate-block" onClick={() => onDuplicateBlock(block.id)} aria-label={`Duplicate ${block.label}`} title="Duplicate block">⧉</button><button className="delete-block" onClick={() => onDeleteBlock(block.id)} aria-label={`Delete ${block.label}`} title="Delete block">×</button></div>)}
           {data.people.map((person) => <div className="timeline-row" key={person.id}>
             <div className="person-cell"><PersonAvatar person={person} small /><div><strong>{person.name}</strong><small>{activeDay.assignments.filter((a) => a.personId === person.id).length} roles</small></div></div>
-            {activeDay.blocks.map((block) => {
+            {blocks.map((block) => {
               const assignment = activeDay.assignments.find((item) => item.personId === person.id && item.blockId === block.id);
               const availability = person.availability[activeDay.id]?.[block.id] ?? "available";
-              return <button className={`assignment-cell ${availability}`} key={block.id} onClick={() => onCell(block.id, person.id, assignment?.id)} aria-label={`${person.name}, ${block.label}${assignment ? `, ${assignment.role}` : ", add assignment"}`}>
-                {assignment ? <span className="role-chip" style={{ background: assignment.color }}>{assignment.role}<i>{assignment.intensity.slice(0, 1)}</i></span> : <span className="add-role">+</span>}
+              const roleAssignments = assignment ? activeDay.assignments.filter((item) => item.blockId === block.id && item.role === assignment.role) : [];
+              const teammates = roleAssignments.filter((item) => item.personId !== person.id).map((item) => data.people.find((candidate) => candidate.id === item.personId)?.name).filter(Boolean);
+              const lead = assignment ? assignmentLeadName(assignment, data.people) : "";
+              return <button className={`assignment-cell ${availability}`} key={block.id} onClick={() => onCell(block.id, person.id, assignment?.id)} title={assignment ? `Lead: ${lead}${teammates.length ? ` · With ${teammates.join(", ")}` : ""}` : `Assign ${person.name} to ${block.label}`} aria-label={`${person.name}, ${block.label}${assignment ? `, ${assignment.role}, lead ${lead}${teammates.length ? `, with ${teammates.join(", ")}` : ""}` : ", add assignment"}`}>
+                {assignment ? <span className="role-chip" style={{ background: assignment.color }}><span><b>{assignment.role}</b><small>Lead: {lead}{teammates.length ? ` · +${teammates.length}` : ""}</small></span><i>{assignment.intensity.slice(0, 1)}</i></span> : <span className="add-role">+</span>}
               </button>;
             })}
           </div>)}
