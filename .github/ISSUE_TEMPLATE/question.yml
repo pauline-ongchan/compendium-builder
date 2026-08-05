@@ -1,0 +1,31 @@
+name: Product question
+description: Record a decision that needs human input before implementation.
+title: "[Question]: "
+labels:
+  - question
+  - agent:needs-input
+body:
+  - type: textarea
+    id: decision
+    attributes:
+      label: Decision needed
+      description: State the exact question that must be answered.
+    validations:
+      required: true
+  - type: textarea
+    id: options
+    attributes:
+      label: Options and tradeoffs
+      description: List known options and their consequences.
+    validations:
+      required: true
+  - type: textarea
+    id: recommendation
+    attributes:
+      label: Current recommendation
+      description: Include a recommendation if one is available.
+  - type: textarea
+    id: unblock
+    attributes:
+      label: What will this decision unblock?
+      description: Link any implementation tickets that depend on the answer.

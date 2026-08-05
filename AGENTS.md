@@ -5,11 +5,15 @@ These instructions apply to the entire repository.
 ## Issue queue
 
 - Implement an issue only when it has the `agent:ready` label.
-- Claim work before editing by replacing `agent:ready` with `agent:in-progress` and recording the intended branch on the issue.
+- Claim work before editing by commenting `/agent claim` on the issue. The queue workflow atomically replaces `agent:ready` with `agent:in-progress`, assigns `agent:lane-a` or `agent:lane-b`, and records the intended branch.
+- Do not edit until the queue workflow confirms the claim. Never apply queue labels directly when claiming or releasing work.
 - Do not implement issues labeled `question`, `agent:needs-input`, or `agent:blocked`.
-- If requirements or acceptance criteria are ambiguous, add `agent:needs-input`, explain the decision required, and stop.
+- If requirements or acceptance criteria are ambiguous, comment `/agent needs-input <reason>` and stop.
+- If an external or technical blocker prevents progress, comment `/agent block <reason>` and stop.
+- Use `/agent release` only when abandoning otherwise ready work; do not release blocked work back into the queue.
 - Prefer one issue per branch and pull request. Group issues only when they share one root cause and cannot be reviewed or reverted cleanly on their own.
 - Keep no more than two automation-created pull requests open for human review at once.
+- See `.github/agent-queue.md` for the reviewer and agent command reference.
 
 ## Branch and worktree safety
 
