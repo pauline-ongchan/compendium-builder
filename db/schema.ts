@@ -1,9 +1,10 @@
-import { sql } from "drizzle-orm";
-import { sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
-export const eventStates = sqliteTable("event_states", {
+export const eventStates = pgTable("event_states", {
   id: text("id").primaryKey(),
   payload: text("payload").notNull(),
-  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+    .notNull()
+    .defaultNow(),
   updatedBy: text("updated_by"),
 });

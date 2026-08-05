@@ -1,25 +1,33 @@
-import { env } from "cloudflare:workers";
-import { drizzle } from "drizzle-orm/d1";
+import { neon } from "@neondatabase/serverless";
+import { sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/neon-http";
 import * as schema from "./schema";
 
-const createEventStatesSql = `CREATE TABLE IF NOT EXISTS event_states (
-  id TEXT PRIMARY KEY NOT NULL,
-  payload TEXT NOT NULL,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_by TEXT
-)`;
-
-export function getDb() {
-  if (!env.DB) {
+function createDb() {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
     throw new Error(
-      "Cloudflare D1 binding `DB` is unavailable. Set the `d1` field in .openai/hosting.json to `DB` or let your control plane inject the real binding values before using the database."
+      "DATABASE_URL is unavailable. Connect a Neon Postgres database to this Vercel project.",
     );
   }
 
-  return drizzle(env.DB, { schema });
+  return drizzle({ client: neon(databaseUrl), schema });
+}
+
+let database: ReturnType<typeof createDb> | null = null;
+
+export function getDb() {
+  database ??= createDb();
+  return database;
 }
 
 export async function ensureDb() {
-  if (!env.DB) throw new Error("Cloudflare D1 binding `DB` is unavailable.");
-  await env.DB.prepare(createEventStatesSql).run();
+  await getDb().execute(sql`
+    CREATE TABLE IF NOT EXISTS event_states (
+      id TEXT PRIMARY KEY NOT NULL,
+      payload TEXT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_by TEXT
+    )
+  `);
 }
