@@ -10,6 +10,9 @@ export type AvailabilitySlot = {
 
 type AvailabilityBlock = { id: string; start: string; end: string };
 type AvailabilityDay = { id: string; blocks: AvailabilityBlock[] };
+export type AssignmentBlock = AvailabilityBlock & { label: string };
+export type PersonAssignment = { id: string; personId: string; blockId: string };
+export type AssignmentSchedule = { blocks: AssignmentBlock[]; assignments: PersonAssignment[] };
 type AvailabilityPerson = {
   availability: Record<string, Record<string, AvailabilityStatus>>;
   availabilitySlots?: Record<string, Record<string, boolean>>;
@@ -29,6 +32,34 @@ export function eventTimeToMinutes(value: string) {
   // Relay's schedules commonly omit meridiem. Early hours are treated as PM.
   if (!meridiem && hour >= 1 && hour <= 6) hour += 12;
   return hour * 60 + minute;
+}
+
+export function blocksOverlap(first: AssignmentBlock, second: AssignmentBlock) {
+  const firstStart = eventTimeToMinutes(first.start);
+  const firstEnd = eventTimeToMinutes(first.end);
+  const secondStart = eventTimeToMinutes(second.start);
+  const secondEnd = eventTimeToMinutes(second.end);
+  if (![firstStart, firstEnd, secondStart, secondEnd].every(Number.isFinite)) return false;
+  return firstStart < secondEnd && secondStart < firstEnd;
+}
+
+export function findAssignmentConflict(
+  day: AssignmentSchedule,
+  personId: string,
+  blockId: string,
+  ignoredAssignmentId?: string,
+) {
+  const targetBlock = day.blocks.find((block) => block.id === blockId);
+  if (!targetBlock) return undefined;
+
+  for (const assignment of day.assignments) {
+    if (assignment.personId !== personId || assignment.id === ignoredAssignmentId) continue;
+    const assignedBlock = day.blocks.find((block) => block.id === assignment.blockId);
+    if (assignedBlock && blocksOverlap(targetBlock, assignedBlock)) {
+      return { assignment, block: assignedBlock };
+    }
+  }
+  return undefined;
 }
 
 function slotKey(minutes: number) {
