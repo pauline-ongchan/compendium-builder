@@ -270,7 +270,7 @@ const seedData: EventState = {
     { id: "prep-task-2", label: "Pack registration and AV bins", done: false, ownerPersonId: "ethan", sessionId: "prep-pack", notes: "Test adapters before packing." },
     { id: "prep-task-3", label: "Walk every participant route", done: false, ownerPersonId: "dane", sessionId: "prep-walkthrough", notes: "Confirm accessibility and locked doors." },
   ],
-  roleLibrary: Object.entries(roleDescriptions).map(([name, description], index) => ({
+  roleLibrary: Object.entries(roleDescriptions).map(([name, description]) => ({
     id: `role-template-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
     name,
     description,
@@ -480,15 +480,15 @@ export function RelayWorkspace() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get("view") === "availability") {
-      setMode("exec");
-      setExecSection("availability");
-      if (params.get("person")) setExecPersonId(params.get("person")!);
-    } else if (params.get("view") === "prep") {
-      setMode("exec");
-      setExecSection("prep");
-      if (params.get("person")) setExecPersonId(params.get("person")!);
-    }
+    const initialView = params.get("view");
+    const initialPersonId = params.get("person");
+    queueMicrotask(() => {
+      if (initialView === "availability" || initialView === "prep") {
+        setMode("exec");
+        setExecSection(initialView);
+        if (initialPersonId) setExecPersonId(initialPersonId);
+      }
+    });
     fetch("/api/event-state")
       .then((response) => response.ok ? response.json() : Promise.reject())
       .then((payload) => {
@@ -1050,7 +1050,7 @@ function ProfileDialog({ person, onClose, onSave }: { person: Person; onClose: (
 
 function RoleTemplateDialog({ data, templateId, onClose, onSave, onDelete }: { data: EventState; templateId?: string; onClose: () => void; onSave: (template: RoleTemplate) => void; onDelete: (templateId: string) => void }) {
   const existing = data.roleLibrary.find((template) => template.id === templateId);
-  const [id] = useState(existing?.id ?? `role-template-${Date.now()}`);
+  const [id] = useState(() => existing?.id ?? `role-template-${Date.now()}`);
   const [name, setName] = useState(existing?.name ?? "");
   const [description, setDescription] = useState(existing?.description ?? "");
   const [leadPersonId, setLeadPersonId] = useState(existing?.leadPersonId ?? "");
