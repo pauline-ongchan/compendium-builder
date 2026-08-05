@@ -8,6 +8,7 @@ import {
   slotsFromLegacyAvailability,
   type AvailabilityStatus,
 } from "./availability";
+import { publishEventState } from "./event-state-client";
 import { parseScheduleTable } from "./schedule-import";
 
 type Section = "schedule" | "prep" | "people" | "roles" | "judging" | "resources";
@@ -476,7 +477,9 @@ export function RelayWorkspace() {
   const [roleTemplateEditor, setRoleTemplateEditor] = useState<{ templateId?: string } | null>(null);
   const [execPersonId, setExecPersonId] = useState("angela");
   const [toast, setToast] = useState("");
+  const [toastError, setToastError] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [publishing, setPublishing] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -559,9 +562,25 @@ export function RelayWorkspace() {
   const required = roleRequirements.reduce((total, item) => total + item.role.target, 0);
   const covered = roleRequirements.reduce((total, item) => total + Math.min(item.role.target, activeAssignments.filter((assignment) => assignment.blockId === item.blockId && assignment.role === item.role.name).length), 0);
 
-  const publish = () => {
-    const next = { ...data, draftChanges: 0, publishedAt: "Just now" };
-    void save(next, "Published. Everyone’s view is up to date.");
+  const publish = async () => {
+    setPublishing(true);
+    setSaving(true);
+    setToast("");
+    try {
+      const published = normalizeEvent(await publishEventState(mapTimeAvailabilityToBlocks(structuredClone(data))));
+      setData(published);
+      setEventLibrary((current) => current.some((event) => event.eventId === published.eventId) ? current.map((event) => event.eventId === published.eventId ? published : event) : [published, ...current]);
+      setToastError(false);
+      setToast("Published. Everyone’s view is up to date.");
+      window.setTimeout(() => setToast(""), 2400);
+    } catch (error) {
+      setToastError(true);
+      setToast(`Publish failed: ${error instanceof Error ? error.message : "Unable to publish the event."}`);
+      window.setTimeout(() => setToast(""), 4800);
+    } finally {
+      setPublishing(false);
+      setSaving(false);
+    }
   };
 
   const saveAssignment = (values: { personIds: string[]; role: string; lead: string; leadPersonId: string; description: string; intensity: Assignment["intensity"] }) => {
@@ -827,7 +846,7 @@ export function RelayWorkspace() {
           <main className="workspace">
             <header className="workspace-header">
               <div><div className="eyebrow">{data.eventType} · {data.venue}</div><h1>{data.eventName}</h1><p>{data.dateRange} <span>•</span> Published {data.publishedAt}</p></div>
-              <div className="header-actions"><span className={`save-state ${saving ? "saving" : ""}`}>{saving ? "Saving…" : hydrated ? "All changes saved" : "Connecting…"}</span><button className="button secondary" onClick={() => setShowEventSettings(true)}>Settings</button><button className="button secondary" onClick={() => setShowNewEvent(true)}>+ New event</button><button className="button secondary" onClick={() => setMode("exec")}>Exec view</button><button className="button primary" onClick={publish} disabled={data.draftChanges === 0}>Publish {data.draftChanges ? `${data.draftChanges} changes` : "changes"}</button></div>
+              <div className="header-actions"><span className={`save-state ${saving ? "saving" : ""}`}>{publishing ? "Publishing…" : saving ? "Saving…" : hydrated ? "All changes saved" : "Connecting…"}</span><button className="button secondary" onClick={() => setShowEventSettings(true)}>Settings</button><button className="button secondary" onClick={() => setShowNewEvent(true)}>+ New event</button><button className="button secondary" onClick={() => setMode("exec")}>Exec view</button><button className="button primary" onClick={() => void publish()} disabled={data.draftChanges === 0 || publishing}>{publishing ? "Publishing…" : `Publish ${data.draftChanges ? `${data.draftChanges} changes` : "changes"}`}</button></div>
             </header>
 
             {section === "schedule" && <ScheduleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} warnings={warnings} covered={covered} required={required} onCell={(blockId, personId, assignmentId) => setDrawer({ blockId, personId, assignmentId })} onAddBlock={() => setBlockEditor({})} onImport={() => setShowScheduleImport(true)} onEditBlock={(blockId) => setBlockEditor({ blockId })} onDuplicateBlock={duplicateBlock} onDeleteBlock={deleteBlock} />}
@@ -850,7 +869,7 @@ export function RelayWorkspace() {
       ) : (
         <ExecView data={data} person={currentExec} dayId={dayId} setDayId={setDayId} section={execSection} setSection={setExecSection} onAvailability={updateAvailability} onPrepAvailability={updatePrepAvailability} onPersonChange={setExecPersonId} onExit={() => setMode("director")} />
       )}
-      {toast ? <div className="toast" role="status"><span>✓</span>{toast}</div> : null}
+      {toast ? <div className={`toast ${toastError ? "error" : ""}`} role={toastError ? "alert" : "status"}><span>{toastError ? "!" : "✓"}</span>{toast}</div> : null}
     </div>
   );
 }
