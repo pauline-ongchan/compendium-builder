@@ -1,0 +1,34 @@
+name: Agent issue queue
+
+on:
+  issue_comment:
+    types:
+      - created
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: agent-issue-queue-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  command:
+    if: >-
+      github.event.issue.pull_request == null &&
+      startsWith(github.event.comment.body, '/agent ')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Apply queue command
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const run = require('./.github/scripts/agent-queue.cjs');
+            await run({ github, context, core });
