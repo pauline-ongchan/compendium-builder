@@ -34,7 +34,7 @@ export async function PUT(request: Request) {
       target: eventStates.id,
       set: { payload, updatedBy, updatedAt: new Date().toISOString() },
     });
-    return Response.json({ ok: true });
+    return Response.json({ ok: true, state });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Unable to save event" }, { status: 500 });
   }
