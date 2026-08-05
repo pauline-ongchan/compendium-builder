@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   eventTimeToMinutes,
+  findAssignmentConflict,
   getAvailabilitySlots,
   mapTimeAvailabilityToBlocks,
   slotsFromLegacyAvailability,
@@ -439,18 +440,20 @@ function assignmentLeadName(assignment: Assignment, people: Person[]) {
   return people.find((person) => person.id === assignment.leadPersonId)?.name ?? assignment.lead ?? "Event Directors";
 }
 
-function candidateFit(person: Person, role: string, day: EventDay, block: EventBlock) {
-  const status = person.availability[day.id]?.[block.id] ?? "available";
+function candidateFit(person: Person, role: string, day: EventDay, block: EventBlock, ignoredAssignmentId?: string) {
+  const conflict = findAssignmentConflict(day, person.id, block.id, ignoredAssignmentId);
+  const availability = person.availability[day.id]?.[block.id] ?? "available";
+  const status = conflict ? "unavailable" : availability;
   const load = day.assignments.filter((assignment) => assignment.personId === person.id).length;
   const preferred = person.preferences.some((preference) => preference.toLowerCase() === role.toLowerCase());
-  let score = status === "available" ? 50 : status === "conditional" ? 20 : -100;
+  let score = conflict ? -200 : status === "available" ? 50 : status === "conditional" ? 20 : -100;
   if (preferred) score += 35;
   score += Math.max(0, 15 - load * 3);
-  const reasons = [status === "available" ? "Available for the full block" : status === "conditional" ? "Conditionally available" : "Marked unavailable"];
+  const reasons = [conflict ? `Already assigned to ${conflict.block.label} (${conflict.block.start}–${conflict.block.end})` : status === "available" ? "Available for the full block" : status === "conditional" ? "Conditionally available" : "Marked unavailable"];
   if (preferred) reasons.push(`Prefers ${role}`);
   if (load <= 2) reasons.push("Light schedule today");
   else reasons.push(`${load} assignments today`);
-  return { score, status, load, preferred, reason: reasons.join(" · ") };
+  return { score, status, load, preferred, conflict, reason: reasons.join(" · ") };
 }
 
 function PersonAvatar({ person, small = false }: { person: Person; small?: boolean }) {
@@ -568,11 +571,17 @@ export function RelayWorkspace() {
     if (!drawer) return;
     const next = structuredClone(data);
     const day = next.days.find((item) => item.id === dayId)!;
+    const personIds = values.personIds.filter((personId) => !findAssignmentConflict(day, personId, drawer.blockId, drawer.assignmentId));
+    if (!personIds.length) {
+      setToast("That person is already assigned to an overlapping event block.");
+      window.setTimeout(() => setToast(""), 2400);
+      return;
+    }
     if (drawer.assignmentId) {
       const assignment = day.assignments.find((item) => item.id === drawer.assignmentId)!;
-      Object.assign(assignment, { personId: values.personIds[0], role: values.role, lead: values.lead, leadPersonId: values.leadPersonId, description: values.description, intensity: values.intensity, color: roleColor(values.role) });
+      Object.assign(assignment, { personId: personIds[0], role: values.role, lead: values.lead, leadPersonId: values.leadPersonId, description: values.description, intensity: values.intensity, color: roleColor(values.role) });
     } else {
-      for (const personId of values.personIds) {
+      for (const personId of personIds) {
         if (day.assignments.some((assignment) => assignment.blockId === drawer.blockId && assignment.personId === personId && assignment.role === values.role)) continue;
         day.assignments.push({ id: `${drawer.blockId}-${personId}-${Date.now()}`, blockId: drawer.blockId, personId, color: roleColor(values.role), role: values.role, lead: values.lead, leadPersonId: values.leadPersonId, description: values.description, intensity: values.intensity });
       }
@@ -580,6 +589,17 @@ export function RelayWorkspace() {
     next.draftChanges += 1;
     setDrawer(null);
     void save(next, "Assignment saved to the shared event.");
+  };
+
+  const deleteAssignment = (assignmentId: string) => {
+    const assignment = activeDay.assignments.find((item) => item.id === assignmentId);
+    if (!assignment || !window.confirm("Remove this assignment? The person will become available for overlapping blocks again.")) return;
+    const next = structuredClone(data);
+    const day = next.days.find((item) => item.id === dayId)!;
+    day.assignments = day.assignments.filter((item) => item.id !== assignmentId);
+    next.draftChanges += 1;
+    setDrawer(null);
+    void save(next, "Assignment removed. Overlapping time is available again.");
   };
 
   const updateAvailability = (personId: string, availabilityDayId: string, slotKey: string) => {
@@ -837,7 +857,7 @@ export function RelayWorkspace() {
             {section === "judging" && <JudgingView data={data} onCycle={cycleJudgingStatus} />}
             {section === "resources" && <ResourcesView data={data} onSave={saveOverview} />}
           </main>
-          {drawer && <AssignmentDrawer data={data} day={activeDay} drawer={drawer} onClose={() => setDrawer(null)} onSave={saveAssignment} />}
+          {drawer && <AssignmentDrawer data={data} day={activeDay} drawer={drawer} onClose={() => setDrawer(null)} onSave={saveAssignment} onDelete={deleteAssignment} />}
           {blockEditor && <BlockEditor data={data} day={activeDay} blockId={blockEditor.blockId} onClose={() => setBlockEditor(null)} onSave={saveBlock} />}
           {showNewEvent && <NewEventDialog onClose={() => setShowNewEvent(false)} onCreate={startNewEvent} />}
           {showEventLibrary && <EventLibraryDialog events={eventLibrary} currentId={data.eventId} onClose={() => setShowEventLibrary(false)} onSwitch={switchEvent} onNew={() => { setShowEventLibrary(false); setShowNewEvent(true); }} />}
@@ -889,11 +909,13 @@ function ScheduleView({ data, activeDay, dayId, setDayId, warnings, covered, req
             <div className="person-cell"><PersonAvatar person={person} small /><div><strong>{person.name}</strong><small>{activeDay.assignments.filter((a) => a.personId === person.id).length} roles</small></div></div>
             {blocks.map((block) => {
               const assignment = activeDay.assignments.find((item) => item.personId === person.id && item.blockId === block.id);
-              const availability = person.availability[activeDay.id]?.[block.id] ?? "available";
+              const conflict = findAssignmentConflict(activeDay, person.id, block.id, assignment?.id);
+              const availability = conflict ? "unavailable" : person.availability[activeDay.id]?.[block.id] ?? "available";
               const roleAssignments = assignment ? activeDay.assignments.filter((item) => item.blockId === block.id && item.role === assignment.role) : [];
               const teammates = roleAssignments.filter((item) => item.personId !== person.id).map((item) => data.people.find((candidate) => candidate.id === item.personId)?.name).filter(Boolean);
               const lead = assignment ? assignmentLeadName(assignment, data.people) : "";
-              return <button className={`assignment-cell ${availability}`} key={block.id} onClick={() => onCell(block.id, person.id, assignment?.id)} title={assignment ? `Lead: ${lead}${teammates.length ? ` · With ${teammates.join(", ")}` : ""}` : `Assign ${person.name} to ${block.label}`} aria-label={`${person.name}, ${block.label}${assignment ? `, ${assignment.role}, lead ${lead}${teammates.length ? `, with ${teammates.join(", ")}` : ""}` : ", add assignment"}`}>
+              const conflictReason = conflict ? `Unavailable: already assigned to ${conflict.block.label} (${conflict.block.start}–${conflict.block.end})` : "";
+              return <button className={`assignment-cell ${availability}`} key={block.id} onClick={() => onCell(block.id, person.id, assignment?.id)} title={conflictReason || (assignment ? `Lead: ${lead}${teammates.length ? ` · With ${teammates.join(", ")}` : ""}` : `Assign ${person.name} to ${block.label}`)} aria-label={`${person.name}, ${block.label}${conflictReason ? `, ${conflictReason}` : assignment ? `, ${assignment.role}, lead ${lead}${teammates.length ? `, with ${teammates.join(", ")}` : ""}` : ", add assignment"}`}>
                 {assignment ? <span className="role-chip" style={{ background: assignment.color }}><span><b>{assignment.role}</b><small>Lead: {lead}{teammates.length ? ` · +${teammates.length}` : ""}</small></span><i>{assignment.intensity.slice(0, 1)}</i></span> : <span className="add-role">+</span>}
               </button>;
             })}
@@ -1079,7 +1101,7 @@ function BlockEditor({ data, day, blockId, onClose, onSave }: { data: EventState
   return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog block-dialog" role="dialog" aria-modal="true" aria-label={`${existing ? "Edit" : "Add"} schedule block`}><header><div><span className="kicker">{day.label} · {existing ? "Edit block" : "New block"}</span><h2>{existing ? existing.label : "Add schedule block"}</h2><p>Set the time, optional location, roles, and instructions.</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="block-form"><section><h3>Block details</h3><label>Block name<input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="e.g. Registration" autoFocus /></label><div className="form-row three"><label>Start<input value={start} onChange={(event) => setStart(event.target.value)} /></label><label>End<input value={end} onChange={(event) => setEnd(event.target.value)} /></label><label>Ideal staff<input type="number" min="1" value={target} onChange={(event) => setTarget(Math.max(1, Number(event.target.value)))} /></label></div><label>Location <small>(optional)</small><input value={location} onChange={(event) => setLocation(event.target.value)} placeholder="Fill in later" /></label><label>Block colour<input className="color-input" type="color" value={color} onChange={(event) => setColor(event.target.value)} /></label></section><section><div className="form-section-head"><div><h3>Roles in this block</h3><p>Set the default lead and instructions before assigning members.</p></div><button type="button" onClick={() => setRoles((current) => [...current, { id: `${id}-role-${Date.now()}`, name: "", description: "", leadPersonId: "", target: 1, intensity: "Medium" }])}>+ Add role</button></div><div className="builder-list">{roles.map((role, index) => <article key={role.id}><div className="builder-row"><span>{String(index + 1).padStart(2, "0")}</span><input value={role.name} onChange={(event) => updateRole(role.id, { name: event.target.value })} placeholder="Role name" /><select value={role.leadPersonId} onChange={(event) => updateRole(role.id, { leadPersonId: event.target.value })}><option value="">Choose lead</option>{data.people.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}</select><button type="button" onClick={() => setRoles((current) => current.filter((item) => item.id !== role.id))} aria-label={`Remove role ${role.name || index + 1}`}>×</button></div><textarea rows={2} value={role.description} onChange={(event) => updateRole(role.id, { description: event.target.value })} placeholder="What does this role need to do?" /><div className="builder-meta"><label>People needed<input type="number" min="1" value={role.target} onChange={(event) => updateRole(role.id, { target: Math.max(1, Number(event.target.value)) })} /></label><label>Intensity<select value={role.intensity} onChange={(event) => updateRole(role.id, { intensity: event.target.value as BlockRole["intensity"] })}><option>Low</option><option>Medium</option><option>High</option></select></label></div></article>)}</div></section></div><footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!label.trim()} onClick={() => onSave({ id, label: label.trim(), short: label.slice(0, 3).toUpperCase(), start, end, location: location.trim(), color, target, requiredRoles: roles.map((role) => role.name.trim()).filter(Boolean), roles: roles.filter((role) => role.name.trim()).map((role) => ({ ...role, name: role.name.trim(), description: role.description.trim() || roleDescriptions[role.name.trim()] || `Support ${label}.` })), links: existing?.links ?? [] })}>{existing ? "Save block" : "Add block"}</button></footer></section></div>;
 }
 
-function AssignmentDrawer({ data, day, drawer, onClose, onSave }: { data: EventState; day: EventDay; drawer: { blockId: string; personId: string; assignmentId?: string }; onClose: () => void; onSave: (values: { personIds: string[]; role: string; lead: string; leadPersonId: string; description: string; intensity: Assignment["intensity"] }) => void }) {
+function AssignmentDrawer({ data, day, drawer, onClose, onSave, onDelete }: { data: EventState; day: EventDay; drawer: { blockId: string; personId: string; assignmentId?: string }; onClose: () => void; onSave: (values: { personIds: string[]; role: string; lead: string; leadPersonId: string; description: string; intensity: Assignment["intensity"] }) => void; onDelete: (assignmentId: string) => void }) {
   const existing = day.assignments.find((assignment) => assignment.id === drawer.assignmentId);
   const block = day.blocks.find((item) => item.id === drawer.blockId)!;
   const availableRoles = blockRoles(block);
@@ -1093,8 +1115,9 @@ function AssignmentDrawer({ data, day, drawer, onClose, onSave }: { data: EventS
   const [search, setSearch] = useState("");
   const [assignMode, setAssignMode] = useState<"person" | "group">("person");
   const [groupId, setGroupId] = useState(data.groups[0]?.id ?? "");
-  const candidates = data.people.map((person) => ({ person, fit: candidateFit(person, role, day, block) })).filter(({ person }) => `${person.name} ${person.team} ${person.groupIds.map((id) => data.groups.find((group) => group.id === id)?.name ?? "").join(" ")} ${person.preferences.join(" ")}`.toLowerCase().includes(search.toLowerCase())).sort((a, b) => b.fit.score - a.fit.score || a.person.name.localeCompare(b.person.name));
+  const candidates = data.people.map((person) => ({ person, fit: candidateFit(person, role, day, block, existing?.id) })).filter(({ person }) => `${person.name} ${person.team} ${person.groupIds.map((id) => data.groups.find((group) => group.id === id)?.name ?? "").join(" ")} ${person.preferences.join(" ")}`.toLowerCase().includes(search.toLowerCase())).sort((a, b) => b.fit.score - a.fit.score || a.person.name.localeCompare(b.person.name));
   const groupCandidates = candidates.filter(({ person, fit }) => person.groupIds.includes(groupId) && fit.status === "available");
+  const selectedFit = candidates.find(({ person }) => person.id === personId)?.fit;
   const selectRole = (nextRole: string) => {
     setRole(nextRole);
     const detail = availableRoles.find((item) => item.name === nextRole);
@@ -1103,7 +1126,7 @@ function AssignmentDrawer({ data, day, drawer, onClose, onSave }: { data: EventS
     setIntensity(detail?.intensity ?? "Medium");
   };
   const lead = data.people.find((person) => person.id === leadPersonId)?.name ?? "Event Directors";
-  return <div className="drawer-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><aside className="assignment-drawer" role="dialog" aria-modal="true" aria-label="Edit assignment"><header><div><span className="kicker">{existing ? "Edit assignment" : "New assignment"}</span><h2>{block.label}</h2><p>{block.start}–{block.end}{block.location ? ` · ${block.location}` : ""}</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="drawer-body"><label>Role<select value={role} onChange={(event) => selectRole(event.target.value)}>{availableRoles.map((item) => <option value={item.name} key={item.id}>{item.name}</option>)}{!availableRoles.some((item) => item.name === role) ? <option value={role}>{role}</option> : null}</select></label><label>Role lead<select value={leadPersonId} onChange={(event) => setLeadPersonId(event.target.value)}><option value="">Event Directors</option>{data.people.map((person) => <option value={person.id} key={person.id}>{person.name}</option>)}</select></label><div className="field"><span>Intensity</span><div className="intensity-toggle">{(["Low", "Medium", "High"] as const).map((item) => <button type="button" className={intensity === item ? "active" : ""} onClick={() => setIntensity(item)} key={item}>{item}</button>)}</div></div><label>Instructions<textarea rows={5} value={description} onChange={(event) => setDescription(event.target.value)} /></label>{!existing ? <div className="assign-mode"><button className={assignMode === "person" ? "active" : ""} onClick={() => setAssignMode("person")}>One exec</button><button className={assignMode === "group" ? "active" : ""} onClick={() => setAssignMode("group")}>Available group</button></div> : null}{assignMode === "group" && !existing ? <div className="group-assignment"><label>Exec group<select value={groupId} onChange={(event) => setGroupId(event.target.value)}>{data.groups.map((group) => <option value={group.id} key={group.id}>{group.name}</option>)}</select></label><p><strong>{groupCandidates.length}</strong> available member{groupCandidates.length === 1 ? "" : "s"} will be assigned. Conditional and unavailable members are skipped; individual assignments can still be changed afterward.</p><div className="group-preview">{groupCandidates.map(({ person }) => <span key={person.id}><PersonAvatar person={person} small />{person.name}</span>)}</div></div> : <><div className="candidate-head"><span>Assign to</span><small>Sorted by availability and fit</small></div><label className="candidate-search"><span>Search execs</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by name, group, or preference…" /></label><div className="candidate-list">{candidates.map(({ person, fit }, index) => <button type="button" className={personId === person.id ? "selected" : ""} key={person.id} onClick={() => setPersonId(person.id)}><PersonAvatar person={person} /><div><strong>{person.name}{index === 0 && !search ? <em>Top fit</em> : null}</strong><small>{fit.reason}</small></div><span className={`candidate-status ${fit.status}`}>{fit.status}</span></button>)}</div></>}</div><footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={assignMode === "group" && !groupCandidates.length} onClick={() => onSave({ personIds: assignMode === "group" && !existing ? groupCandidates.map(({ person }) => person.id) : [personId], role, lead, leadPersonId, description, intensity })}>{assignMode === "group" && !existing ? `Assign ${groupCandidates.length} execs` : "Save assignment"}</button></footer></aside></div>;
+  return <div className="drawer-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><aside className="assignment-drawer" role="dialog" aria-modal="true" aria-label="Edit assignment"><header><div><span className="kicker">{existing ? "Edit assignment" : "New assignment"}</span><h2>{block.label}</h2><p>{block.start}–{block.end}{block.location ? ` · ${block.location}` : ""}</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="drawer-body"><label>Role<select value={role} onChange={(event) => selectRole(event.target.value)}>{availableRoles.map((item) => <option value={item.name} key={item.id}>{item.name}</option>)}{!availableRoles.some((item) => item.name === role) ? <option value={role}>{role}</option> : null}</select></label><label>Role lead<select value={leadPersonId} onChange={(event) => setLeadPersonId(event.target.value)}><option value="">Event Directors</option>{data.people.map((person) => <option value={person.id} key={person.id}>{person.name}</option>)}</select></label><div className="field"><span>Intensity</span><div className="intensity-toggle">{(["Low", "Medium", "High"] as const).map((item) => <button type="button" className={intensity === item ? "active" : ""} onClick={() => setIntensity(item)} key={item}>{item}</button>)}</div></div><label>Instructions<textarea rows={5} value={description} onChange={(event) => setDescription(event.target.value)} /></label>{!existing ? <div className="assign-mode"><button className={assignMode === "person" ? "active" : ""} onClick={() => setAssignMode("person")}>One exec</button><button className={assignMode === "group" ? "active" : ""} onClick={() => setAssignMode("group")}>Available group</button></div> : null}{assignMode === "group" && !existing ? <div className="group-assignment"><label>Exec group<select value={groupId} onChange={(event) => setGroupId(event.target.value)}>{data.groups.map((group) => <option value={group.id} key={group.id}>{group.name}</option>)}</select></label><p><strong>{groupCandidates.length}</strong> available member{groupCandidates.length === 1 ? "" : "s"} will be assigned. Conditional and unavailable members are skipped; individual assignments can still be changed afterward.</p><div className="group-preview">{groupCandidates.map(({ person }) => <span key={person.id}><PersonAvatar person={person} small />{person.name}</span>)}</div></div> : <><div className="candidate-head"><span>Assign to</span><small>Sorted by availability and fit</small></div><label className="candidate-search"><span>Search execs</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by name, group, or preference…" /></label><div className="candidate-list">{candidates.map(({ person, fit }, index) => <button type="button" className={personId === person.id ? "selected" : ""} key={person.id} disabled={Boolean(fit.conflict)} onClick={() => setPersonId(person.id)}><PersonAvatar person={person} /><div><strong>{person.name}{index === 0 && !search ? <em>Top fit</em> : null}</strong><small>{fit.reason}</small></div><span className={`candidate-status ${fit.status}`}>{fit.status}</span></button>)}</div></>}</div><footer>{existing ? <button className="button danger" onClick={() => onDelete(existing.id)}>Remove assignment</button> : null}<button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={(assignMode === "group" && !groupCandidates.length) || (assignMode === "person" && Boolean(selectedFit?.conflict))} onClick={() => onSave({ personIds: assignMode === "group" && !existing ? groupCandidates.map(({ person }) => person.id) : [personId], role, lead, leadPersonId, description, intensity })}>{assignMode === "group" && !existing ? `Assign ${groupCandidates.length} execs` : "Save assignment"}</button></footer></aside></div>;
 }
 
 function AvailabilityTimeGrid({ data, person, onToggle }: { data: EventState; person: Person; onToggle: (dayId: string, slotKey: string) => void }) {
