@@ -931,7 +931,7 @@ function ScheduleView({ data, activeDay, dayId, setDayId, warnings, covered, req
     </div>
     <section className="board-card">
       <div className="board-toolbar"><div><strong>{activeDay.date}</strong><span>{blocks[0].start} – {blocks.reduce((latest, block) => timeToMinutes(block.end) > timeToMinutes(latest) ? block.end : latest, blocks[0].end)}</span></div><div className="legend"><span><i className="legend-dot available" />Available</span><span><i className="legend-dot conditional" />Conditional</span><span><i className="legend-dot conflict" />Conflict</span></div></div>
-      <div className="timeline-scroll">
+      <div className="timeline-scroll" tabIndex={0} aria-label={`${activeDay.label} assignment grid`}>
         <div className="timeline" style={{ "--columns": blocks.length } as React.CSSProperties}>
           <div className="timeline-corner">Person</div>
           {timeframes.map((timeframe) => <div className="timeframe-head" key={`${timeframe.start}-${timeframe.end}`} style={{ gridColumn: `span ${timeframe.blocks.length}` }}><strong>{timeframe.start}–{timeframe.end}</strong><span>{timeframe.blocks.length > 1 ? `${timeframe.blocks.length} concurrent events` : "1 event"}</span></div>)}
