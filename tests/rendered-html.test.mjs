@@ -30,6 +30,8 @@ test("ships Relay product metadata and removes the starter preview", async () =>
   assert.match(workspace, /Duplicate/);
   assert.match(workspace, /onClick=\{onViewAll\}>View all checks/);
   assert.match(workspace, /Scheduling checks/);
+  assert.doesNotMatch(workspace, /Published \{data\.publishedAt\}/);
+  assert.doesNotMatch(workspace, /Last publish \{data\.publishedAt\}/);
   assert.doesNotMatch(workspace, /Build the flow, keep the judgment/);
   assert.match(workspace, /Preview as exec/);
   assert.match(workspace, /onReview\(warning\.reviewTarget\)/);
