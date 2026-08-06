@@ -11,6 +11,7 @@ import {
 } from "./availability";
 import { publishEventState } from "./event-state-client";
 import { parseScheduleTable } from "./schedule-import";
+import { getScheduleChecksViewState, type ScheduleCheck } from "./schedule-checks";
 
 type Section = "schedule" | "prep" | "people" | "roles" | "judging" | "resources";
 type ExecSection = "today" | "schedule" | "prep" | "availability" | "overview" | "directory";
@@ -476,6 +477,7 @@ export function RelayWorkspace() {
   const [showScheduleImport, setShowScheduleImport] = useState(false);
   const [showRoster, setShowRoster] = useState(false);
   const [showEventSettings, setShowEventSettings] = useState(false);
+  const [showScheduleChecks, setShowScheduleChecks] = useState(false);
   const [profilePersonId, setProfilePersonId] = useState<string | null>(null);
   const [roleTemplateEditor, setRoleTemplateEditor] = useState<{ templateId?: string } | null>(null);
   const [execPersonId, setExecPersonId] = useState("angela");
@@ -483,6 +485,7 @@ export function RelayWorkspace() {
   const [toastError, setToastError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -496,7 +499,11 @@ export function RelayWorkspace() {
       }
     });
     fetch("/api/event-state")
-      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error ?? `Unable to load shared event data (HTTP ${response.status}).`);
+        return payload;
+      })
       .then((payload) => {
         const states = (payload.states ?? (payload.state ? [payload.state] : [])).map((state: EventState) => normalizeEvent(state));
         if (states.length) {
@@ -507,7 +514,7 @@ export function RelayWorkspace() {
           setDayId(initial.days[0].id);
         }
       })
-      .catch(() => undefined)
+      .catch((error) => setLoadError(error instanceof Error ? error.message : "Unable to load shared event data."))
       .finally(() => setHydrated(true));
   }, []);
 
@@ -530,7 +537,7 @@ export function RelayWorkspace() {
   const activeAssignments = activeDay.assignments;
 
   const warnings = useMemo(() => {
-    const items: { level: string; title: string; detail: string }[] = [];
+    const items: ScheduleCheck[] = [];
     for (const day of data.days) {
       for (const assignment of day.assignments) {
         const person = data.people.find((item) => item.id === assignment.personId);
@@ -869,7 +876,7 @@ export function RelayWorkspace() {
               <div className="header-actions"><span className={`save-state ${saving ? "saving" : ""}`}>{publishing ? "Publishing…" : saving ? "Saving…" : hydrated ? "All changes saved" : "Connecting…"}</span><button className="button secondary" onClick={() => setShowEventSettings(true)}>Settings</button><button className="button secondary" onClick={() => setShowNewEvent(true)}>+ New event</button><button className="button secondary" onClick={() => setMode("exec")}>Exec view</button><button className="button primary" onClick={() => void publish()} disabled={data.draftChanges === 0 || publishing}>{publishing ? "Publishing…" : `Publish ${data.draftChanges ? `${data.draftChanges} changes` : "changes"}`}</button></div>
             </header>
 
-            {section === "schedule" && <ScheduleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} warnings={warnings} covered={covered} required={required} onCell={(blockId, personId, assignmentId) => setDrawer({ blockId, personId, assignmentId })} onAddBlock={() => setBlockEditor({})} onImport={() => setShowScheduleImport(true)} onEditBlock={(blockId) => setBlockEditor({ blockId })} onDuplicateBlock={duplicateBlock} onDeleteBlock={deleteBlock} />}
+            {section === "schedule" && <ScheduleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} warnings={warnings} covered={covered} required={required} onCell={(blockId, personId, assignmentId) => setDrawer({ blockId, personId, assignmentId })} onAddBlock={() => setBlockEditor({})} onImport={() => setShowScheduleImport(true)} onEditBlock={(blockId) => setBlockEditor({ blockId })} onDuplicateBlock={duplicateBlock} onDeleteBlock={deleteBlock} onViewAll={() => setShowScheduleChecks(true)} />}
             {section === "prep" && <PrepView data={data} onSave={savePrep} onShare={sharePrep} />}
             {section === "people" && <PeopleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} onManageRoster={() => setShowRoster(true)} onShareAvailability={shareAvailability} onEditProfile={setProfilePersonId} />}
             {section === "roles" && <RolesView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} onOpen={(assignment) => setDrawer({ blockId: assignment.blockId, personId: assignment.personId, assignmentId: assignment.id })} onEditBlock={(blockId) => setBlockEditor({ blockId })} onDuplicateBlock={duplicateBlock} onAddRoleToBlock={addRoleToBlock} onCreateRole={() => setRoleTemplateEditor({})} onEditRole={(templateId) => setRoleTemplateEditor({ templateId })} />}
@@ -885,6 +892,7 @@ export function RelayWorkspace() {
           {profilePersonId && <ProfileDialog person={data.people.find((person) => person.id === profilePersonId)!} onClose={() => setProfilePersonId(null)} onSave={saveProfile} />}
           {roleTemplateEditor && <RoleTemplateDialog data={data} templateId={roleTemplateEditor.templateId} onClose={() => setRoleTemplateEditor(null)} onSave={saveRoleTemplate} onDelete={deleteRoleTemplate} />}
           {showEventSettings && <EventSettingsDialog data={data} onClose={() => setShowEventSettings(false)} onSave={saveEventSettings} />}
+          {showScheduleChecks && <ScheduleChecksDialog checks={warnings} loading={!hydrated} error={loadError} onClose={() => setShowScheduleChecks(false)} />}
         </>
       ) : (
         <ExecView data={data} person={currentExec} dayId={dayId} setDayId={setDayId} section={execSection} setSection={setExecSection} onAvailability={updateAvailability} onPrepAvailability={updatePrepAvailability} onPersonChange={setExecPersonId} onExit={() => setMode("director")} />
@@ -898,7 +906,7 @@ function DayToggle({ data, dayId, setDayId }: { data: EventState; dayId: string;
   return <div className="day-toggle" aria-label="Event day">{data.days.map((day) => <button key={day.id} className={dayId === day.id ? "active" : ""} onClick={() => setDayId(day.id)}>{day.label}<small>{day.date.replace(/^[A-Za-z]+, /, "")}</small></button>)}</div>;
 }
 
-function ScheduleView({ data, activeDay, dayId, setDayId, warnings, covered, required, onCell, onAddBlock, onImport, onEditBlock, onDuplicateBlock, onDeleteBlock }: { data: EventState; activeDay: EventDay; dayId: string; setDayId: (id: string) => void; warnings: { level: string; title: string; detail: string }[]; covered: number; required: number; onCell: (blockId: string, personId: string, assignmentId?: string) => void; onAddBlock: () => void; onImport: () => void; onEditBlock: (blockId: string) => void; onDuplicateBlock: (blockId: string) => void; onDeleteBlock: (blockId: string) => void }) {
+function ScheduleView({ data, activeDay, dayId, setDayId, warnings, covered, required, onCell, onAddBlock, onImport, onEditBlock, onDuplicateBlock, onDeleteBlock, onViewAll }: { data: EventState; activeDay: EventDay; dayId: string; setDayId: (id: string) => void; warnings: ScheduleCheck[]; covered: number; required: number; onCell: (blockId: string, personId: string, assignmentId?: string) => void; onAddBlock: () => void; onImport: () => void; onEditBlock: (blockId: string) => void; onDuplicateBlock: (blockId: string) => void; onDeleteBlock: (blockId: string) => void; onViewAll: () => void }) {
   if (!activeDay.blocks.length) return <div className="content schedule-content"><div className="section-title"><div><span className="kicker">Schedule</span><h2>Add the event schedule</h2><p>Import a day from Google Docs or add blocks manually. Locations can be filled in later.</p></div><DayToggle data={data} dayId={dayId} setDayId={setDayId} /></div><section className="empty-builder"><span>01</span><h3>No blocks yet</h3><p>Paste a table or time-based schedule from the planning document.</p><div className="empty-actions"><button className="button primary" onClick={onImport}>Import from Google Docs</button><button className="button secondary" onClick={onAddBlock}>+ Add block</button></div></section></div>;
   const blocks = sortBlocks(activeDay.blocks);
   const timeframes = blocks.reduce<{ start: string; end: string; blocks: EventBlock[] }[]>((groups, block) => {
@@ -942,8 +950,13 @@ function ScheduleView({ data, activeDay, dayId, setDayId, warnings, covered, req
         </div>
       </div>
     </section>
-    <section className="attention-section"><div className="subhead"><div><span className="kicker">Human review</span><h3>What needs your judgment</h3></div><button className="text-button">View all checks →</button></div><div className="warning-grid">{warnings.slice(0, 3).map((warning, index) => <article key={`${warning.title}-${index}`}><span className={`warning-type w-${warning.level.toLowerCase()}`}>{warning.level}</span><h4>{warning.title}</h4><p>{warning.detail}</p><button>Review in schedule <span>→</span></button></article>)}</div></section>
+    <section className="attention-section"><div className="subhead"><div><span className="kicker">Human review</span><h3>What needs your judgment</h3></div><button className="text-button" onClick={onViewAll}>View all checks →</button></div><div className="warning-grid">{warnings.slice(0, 3).map((warning, index) => <article key={`${warning.title}-${index}`}><span className={`warning-type w-${warning.level.toLowerCase()}`}>{warning.level}</span><h4>{warning.title}</h4><p>{warning.detail}</p><button>Review in schedule <span>→</span></button></article>)}</div></section>
   </div>;
+}
+
+function ScheduleChecksDialog({ checks, loading, error, onClose }: { checks: ScheduleCheck[]; loading: boolean; error: string; onClose: () => void }) {
+  const view = getScheduleChecksViewState(checks, loading, error);
+  return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog checks-dialog" role="dialog" aria-modal="true" aria-label="Scheduling checks"><header><div><span className="kicker">Human review</span><h2>Scheduling checks</h2><p>{view.phase === "loading" ? "Checking the shared schedule…" : view.phase === "empty" ? "No scheduling issues need attention." : `${view.checks.length} check${view.checks.length === 1 ? "" : "s"} across the complete event.`}</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="checks-dialog-body">{view.error ? <div className="checks-error" role="alert"><strong>Shared event data could not be refreshed.</strong><p>{view.error} The checks below reflect the schedule currently on screen.</p></div> : null}{view.phase === "loading" ? <div className="checks-state" role="status"><span className="checks-spinner" /><h3>Loading scheduling checks</h3><p>Your schedule stays open while Relay gathers the complete set.</p></div> : view.phase === "empty" ? <div className="checks-state"><span>✓</span><h3>All clear</h3><p>No conflicts, coverage gaps, missing leads, or workload warnings were found.</p></div> : <div className="checks-list">{view.checks.map((check, index) => <article key={`${check.title}-${index}`}><span className={`warning-type w-${check.level.toLowerCase()}`}>{check.level}</span><div><h3>{check.title}</h3><p>{check.detail}</p></div><button onClick={onClose}>Review in schedule <span>→</span></button></article>)}</div>}</div><footer><button className="button primary" onClick={onClose}>Return to scheduling</button></footer></section></div>;
 }
 
 function PrepView({ data, onSave, onShare }: { data: EventState; onSave: (sessions: PrepSession[], tasks: PrepTask[], availability: Record<string, Record<string, AvailabilityStatus>>) => void; onShare: () => void }) {
