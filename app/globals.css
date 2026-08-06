@@ -457,6 +457,8 @@ button { color: inherit; }
 .setup-form label, .block-form label { display: grid; gap: 6px; color: var(--muted); font-size: 8px; text-transform: uppercase; letter-spacing: .08em; font-weight: 720; }
 .setup-form input, .setup-form select, .setup-form textarea, .block-form input, .block-form select, .block-form textarea { width: 100%; min-height: 40px; border: 1px solid #b9beb6; border-radius: 7px; background: white; color: var(--ink); padding: 9px 10px; font-size: 11px; text-transform: none; letter-spacing: normal; resize: vertical; }
 .setup-form label small { color: var(--muted); font-size: 8px; text-transform: none; letter-spacing: normal; font-weight: 500; }
+.setup-form label .field-error { color: #9f4037; }
+.setup-form input[aria-invalid="true"] { border-color: #b65d54; background: #fff8f6; }
 .setup-form .module-toggle { display: grid; grid-template-columns: auto 1fr; align-items: start; gap: 10px; padding: 13px; border: 1px solid var(--line); background: #f7f6f0; color: var(--ink); text-transform: none; letter-spacing: normal; }
 .setup-form .module-toggle input { width: 17px; min-height: 17px; margin-top: 1px; }
 .module-toggle strong, .module-toggle small { display: block; }
