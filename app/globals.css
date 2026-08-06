@@ -433,11 +433,29 @@ button { color: inherit; }
 .drawer-backdrop.centered { align-items: center; justify-content: center; padding: 18px; }
 .setup-dialog { width: min(630px, 100%); max-height: calc(100vh - 36px); background: var(--panel); border: 1px solid var(--ink); box-shadow: 0 24px 80px rgba(20,32,30,.25); display: flex; flex-direction: column; }
 .setup-dialog.block-dialog { width: min(850px, 100%); }
+.setup-dialog.checks-dialog { width: min(760px, 100%); }
 .setup-dialog > header { padding: 20px 22px; border-bottom: 1px solid var(--ink); display: flex; justify-content: space-between; gap: 20px; }
 .setup-dialog > header h2 { margin: 5px 0; font-size: 28px; letter-spacing: -1.2px; }
 .setup-dialog > header p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .setup-dialog > header > button { width: 32px; height: 32px; border: 1px solid var(--line); background: transparent; border-radius: 50%; font-size: 18px; cursor: pointer; }
 .setup-dialog > footer { padding: 14px 22px; border-top: 1px solid var(--ink); display: flex; justify-content: flex-end; gap: 8px; }
+.checks-dialog-body { min-height: 260px; padding: 18px 22px; overflow-y: auto; }
+.checks-error { margin-bottom: 12px; padding: 12px 14px; border: 1px solid #b65d54; background: #fff0ed; color: #762b24; }
+.checks-error strong, .checks-error p { display: block; margin: 0; }
+.checks-error strong { font-size: 11px; }
+.checks-error p { margin-top: 4px; font-size: 9px; line-height: 1.45; }
+.checks-state { min-height: 225px; display: grid; place-items: center; align-content: center; text-align: center; }
+.checks-state > span { width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; background: var(--acid); font-weight: 850; }
+.checks-state h3 { margin: 14px 0 5px; font-size: 20px; }
+.checks-state p { margin: 0; color: var(--muted); font-size: 10px; }
+.checks-spinner { border: 3px solid #d8dcce; border-top-color: var(--ink); animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.checks-list { display: grid; gap: 8px; }
+.checks-list article { min-height: 72px; padding: 11px 12px; border: 1px solid var(--line); background: #faf9f4; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; }
+.checks-list h3, .checks-list p { margin: 0; }
+.checks-list h3 { font-size: 12px; }
+.checks-list p { margin-top: 4px; color: var(--muted); font-size: 9px; }
+.checks-list article > button { border: 0; background: transparent; color: var(--ink); cursor: pointer; font-size: 8px; font-weight: 750; white-space: nowrap; }
 .setup-form, .block-form { padding: 20px 22px; overflow-y: auto; display: grid; gap: 16px; }
 .setup-form label, .block-form label { display: grid; gap: 6px; color: var(--muted); font-size: 8px; text-transform: uppercase; letter-spacing: .08em; font-weight: 720; }
 .setup-form input, .setup-form select, .setup-form textarea, .block-form input, .block-form select, .block-form textarea { width: 100%; min-height: 40px; border: 1px solid #b9beb6; border-radius: 7px; background: white; color: var(--ink); padding: 9px 10px; font-size: 11px; text-transform: none; letter-spacing: normal; resize: vertical; }

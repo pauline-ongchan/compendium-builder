@@ -28,9 +28,12 @@ test("ships Relay product metadata and removes the starter preview", async () =>
   assert.match(workspace, /Participant Registration/);
   assert.match(workspace, /Day-of essentials/);
   assert.match(workspace, /Duplicate/);
+  assert.match(workspace, /onClick=\{onViewAll\}>View all checks/);
+  assert.match(workspace, /Scheduling checks/);
   assert.doesNotMatch(workspace, /Build the flow, keep the judgment/);
   assert.match(workspace, /Preview as exec/);
   assert.match(workspace, /onReview\(warning\.reviewTarget\)/);
+  assert.match(workspace, /onReview\(check\.reviewTarget\)/);
   assert.match(workspace, /data-review-highlight=\{reviewingCell \|\| undefined\}/);
   assert.match(workspace, /highlighted unavailable conflict/);
   assert.match(workspace, /scrollIntoView\(\{ behavior: "smooth", block: "center", inline: "center" \}\)/);
