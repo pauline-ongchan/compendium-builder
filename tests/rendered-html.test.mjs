@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("ships Relay product metadata and removes the starter preview", async () => {
-  const [page, layout, workspace] = await Promise.all([
+test("ships Relay product metadata and schedule-first role assignment", async () => {
+  const [page, layout, workspace, styles, roleApi, schema] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/relay-workspace.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/role-library/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
   ]);
 
   assert.match(page, /RelayWorkspace/);
@@ -38,5 +41,16 @@ test("ships Relay product metadata and removes the starter preview", async () =>
   assert.doesNotMatch(workspace, /setDayCount\(Math\.max/);
   assert.doesNotMatch(workspace, /Build the flow, keep the judgment/);
   assert.match(workspace, /Preview as exec/);
+  assert.match(workspace, /Unlocked/);
+  assert.match(workspace, /Edit role/);
+  assert.match(workspace, /Assign available rest/);
+  assert.match(workspace, /Search role library/);
+  assert.match(workspace, /blockRoleId/);
+  assert.match(styles, /\.timeline-scroll\s*\{[^}]*max-height:[^}]*overflow-y:\s*auto/);
+  assert.match(styles, /\.timeline-corner\s*\{[^}]*position:\s*sticky;[^}]*top:\s*0/);
+  assert.match(styles, /\.block-head\.assignment-ready\s*\{[^}]*position:\s*sticky;[^}]*top:\s*40px/);
+  assert.doesNotMatch(workspace, /Intensity|People needed|Role coverage/);
+  assert.match(roleApi, /roleTemplates/);
+  assert.match(schema, /role_templates/);
   assert.doesNotMatch(`${page}${layout}${workspace}`, /codex-preview|SkeletonPreview/);
 });

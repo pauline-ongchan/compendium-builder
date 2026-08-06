@@ -8,6 +8,13 @@
       "when": 1785808997390,
       "tag": "0000_fearless_shaman",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785998070000,
+      "tag": "0001_shared_role_templates",
+      "breakpoints": true
     }
   ]
 }

@@ -22,10 +22,20 @@ export function getDb() {
 }
 
 export async function ensureDb() {
-  await getDb().execute(sql`
+  const db = getDb();
+  await db.execute(sql`
     CREATE TABLE IF NOT EXISTS event_states (
       id TEXT PRIMARY KEY NOT NULL,
       payload TEXT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_by TEXT
+    )
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS role_templates (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_by TEXT
     )
