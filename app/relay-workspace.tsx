@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   eventTimeToMinutes,
   findAssignmentConflict,
@@ -14,6 +14,8 @@ import { parseScheduleTable } from "./schedule-import";
 
 type Section = "schedule" | "prep" | "people" | "roles" | "judging" | "resources";
 type ExecSection = "today" | "schedule" | "prep" | "availability" | "overview" | "directory";
+type ScheduleReviewTarget = { dayId: string; blockId?: string; personId?: string };
+type ScheduleWarning = { level: string; title: string; detail: string; reviewTarget: ScheduleReviewTarget };
 
 type BlockLink = { id: string; label: string; url: string };
 type RoleTemplate = {
@@ -483,6 +485,8 @@ export function RelayWorkspace() {
   const [toastError, setToastError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [scheduleReviewTarget, setScheduleReviewTarget] = useState<ScheduleReviewTarget | null>(null);
+  const scheduleReviewElement = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -511,6 +515,15 @@ export function RelayWorkspace() {
       .finally(() => setHydrated(true));
   }, []);
 
+  useEffect(() => {
+    if (!scheduleReviewTarget || scheduleReviewTarget.dayId !== dayId) return;
+    const frame = window.requestAnimationFrame(() => {
+      scheduleReviewElement.current?.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+      scheduleReviewElement.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [dayId, scheduleReviewTarget]);
+
   const save = async (next: EventState, message: string) => {
     const mapped = mapTimeAvailabilityToBlocks(structuredClone(next));
     setData(mapped);
@@ -530,23 +543,23 @@ export function RelayWorkspace() {
   const activeAssignments = activeDay.assignments;
 
   const warnings = useMemo(() => {
-    const items: { level: string; title: string; detail: string }[] = [];
+    const items: ScheduleWarning[] = [];
     for (const day of data.days) {
       for (const assignment of day.assignments) {
         const person = data.people.find((item) => item.id === assignment.personId);
         const block = day.blocks.find((item) => item.id === assignment.blockId);
         if (person && block && person.availability[day.id]?.[block.id] === "unavailable") {
-          items.push({ level: "Conflict", title: `${person.name} is unavailable`, detail: `${day.label} · ${block.label} · ${assignment.role}` });
+          items.push({ level: "Conflict", title: `${person.name} is unavailable`, detail: `${day.label} · ${block.label} · ${assignment.role}`, reviewTarget: { dayId: day.id, blockId: block.id, personId: person.id } });
         }
       }
       for (const block of day.blocks) {
         for (const role of blockRoles(block)) {
           const assigned = day.assignments.filter((assignment) => assignment.blockId === block.id && assignment.role === role.name);
           if (assigned.length < role.target) {
-            items.push({ level: "Coverage", title: `${role.name} needs ${role.target - assigned.length} more`, detail: `${day.label} · ${block.label} · ${assigned.length} of ${role.target} assigned` });
+            items.push({ level: "Coverage", title: `${role.name} needs ${role.target - assigned.length} more`, detail: `${day.label} · ${block.label} · ${assigned.length} of ${role.target} assigned`, reviewTarget: { dayId: day.id, blockId: block.id } });
           }
           if (!role.leadPersonId && !assigned.some((assignment) => assignment.leadPersonId)) {
-            items.push({ level: "Lead", title: `${role.name} has no lead`, detail: `${day.label} · ${block.label}` });
+            items.push({ level: "Lead", title: `${role.name} has no lead`, detail: `${day.label} · ${block.label}`, reviewTarget: { dayId: day.id, blockId: block.id } });
           }
         }
       }
@@ -555,7 +568,8 @@ export function RelayWorkspace() {
       const assignments = data.days.flatMap((day) => day.assignments.filter((assignment) => assignment.personId === person.id));
       const highIntensity = assignments.filter((assignment) => assignment.intensity === "High").length;
       if (assignments.length >= 6 || highIntensity >= 3) {
-        items.push({ level: "Workload", title: `${person.name} has a heavy workload`, detail: `${assignments.length} blocks · ${highIntensity} high-intensity` });
+        const scheduledDay = data.days.find((day) => day.assignments.some((assignment) => assignment.personId === person.id))!;
+        items.push({ level: "Workload", title: `${person.name} has a heavy workload`, detail: `${assignments.length} blocks · ${highIntensity} high-intensity`, reviewTarget: { dayId: scheduledDay.id, personId: person.id } });
       }
     }
     return items;
@@ -565,9 +579,10 @@ export function RelayWorkspace() {
   const required = roleRequirements.reduce((total, item) => total + item.role.target, 0);
   const covered = roleRequirements.reduce((total, item) => total + Math.min(item.role.target, activeAssignments.filter((assignment) => assignment.blockId === item.blockId && assignment.role === item.role.name).length), 0);
 
-  const openScheduleReview = () => {
-    setExecSection("schedule");
-    setMode("exec");
+  const openScheduleReview = (target: ScheduleReviewTarget) => {
+    setScheduleReviewTarget(target);
+    setDayId(target.dayId);
+    setSection("schedule");
   };
 
   const publish = async () => {
@@ -874,7 +889,7 @@ export function RelayWorkspace() {
               <div className="header-actions"><span className={`save-state ${saving ? "saving" : ""}`}>{publishing ? "Publishing…" : saving ? "Saving…" : hydrated ? "All changes saved" : "Connecting…"}</span><button className="button secondary" onClick={() => setShowEventSettings(true)}>Settings</button><button className="button secondary" onClick={() => setShowNewEvent(true)}>+ New event</button><button className="button secondary" onClick={() => setMode("exec")}>Exec view</button><button className="button primary" onClick={() => void publish()} disabled={data.draftChanges === 0 || publishing}>{publishing ? "Publishing…" : `Publish ${data.draftChanges ? `${data.draftChanges} changes` : "changes"}`}</button></div>
             </header>
 
-            {section === "schedule" && <ScheduleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} warnings={warnings} covered={covered} required={required} onReview={openScheduleReview} onCell={(blockId, personId, assignmentId) => setDrawer({ blockId, personId, assignmentId })} onAddBlock={() => setBlockEditor({})} onImport={() => setShowScheduleImport(true)} onEditBlock={(blockId) => setBlockEditor({ blockId })} onDuplicateBlock={duplicateBlock} onDeleteBlock={deleteBlock} />}
+            {section === "schedule" && <ScheduleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} warnings={warnings} covered={covered} required={required} reviewTarget={scheduleReviewTarget} reviewElementRef={(element) => { scheduleReviewElement.current = element; }} onReview={openScheduleReview} onCell={(blockId, personId, assignmentId) => setDrawer({ blockId, personId, assignmentId })} onAddBlock={() => setBlockEditor({})} onImport={() => setShowScheduleImport(true)} onEditBlock={(blockId) => setBlockEditor({ blockId })} onDuplicateBlock={duplicateBlock} onDeleteBlock={deleteBlock} />}
             {section === "prep" && <PrepView data={data} onSave={savePrep} onShare={sharePrep} />}
             {section === "people" && <PeopleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} onManageRoster={() => setShowRoster(true)} onShareAvailability={shareAvailability} onEditProfile={setProfilePersonId} />}
             {section === "roles" && <RolesView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} onOpen={(assignment) => setDrawer({ blockId: assignment.blockId, personId: assignment.personId, assignmentId: assignment.id })} onEditBlock={(blockId) => setBlockEditor({ blockId })} onDuplicateBlock={duplicateBlock} onAddRoleToBlock={addRoleToBlock} onCreateRole={() => setRoleTemplateEditor({})} onEditRole={(templateId) => setRoleTemplateEditor({ templateId })} />}
@@ -892,7 +907,7 @@ export function RelayWorkspace() {
           {showEventSettings && <EventSettingsDialog data={data} onClose={() => setShowEventSettings(false)} onSave={saveEventSettings} />}
         </>
       ) : (
-        <ExecView data={data} person={currentExec} dayId={dayId} setDayId={setDayId} section={execSection} setSection={setExecSection} onAvailability={updateAvailability} onPrepAvailability={updatePrepAvailability} onPersonChange={setExecPersonId} onExit={() => { if (execSection === "schedule") setSection("schedule"); setMode("director"); }} />
+        <ExecView data={data} person={currentExec} dayId={dayId} setDayId={setDayId} section={execSection} setSection={setExecSection} onAvailability={updateAvailability} onPrepAvailability={updatePrepAvailability} onPersonChange={setExecPersonId} onExit={() => setMode("director")} />
       )}
       {toast ? <div className={`toast ${toastError ? "error" : ""}`} role={toastError ? "alert" : "status"}><span>{toastError ? "!" : "✓"}</span>{toast}</div> : null}
     </div>
@@ -903,7 +918,7 @@ function DayToggle({ data, dayId, setDayId }: { data: EventState; dayId: string;
   return <div className="day-toggle" aria-label="Event day">{data.days.map((day) => <button key={day.id} className={dayId === day.id ? "active" : ""} onClick={() => setDayId(day.id)}>{day.label}<small>{day.date.replace(/^[A-Za-z]+, /, "")}</small></button>)}</div>;
 }
 
-function ScheduleView({ data, activeDay, dayId, setDayId, warnings, covered, required, onReview, onCell, onAddBlock, onImport, onEditBlock, onDuplicateBlock, onDeleteBlock }: { data: EventState; activeDay: EventDay; dayId: string; setDayId: (id: string) => void; warnings: { level: string; title: string; detail: string }[]; covered: number; required: number; onReview: () => void; onCell: (blockId: string, personId: string, assignmentId?: string) => void; onAddBlock: () => void; onImport: () => void; onEditBlock: (blockId: string) => void; onDuplicateBlock: (blockId: string) => void; onDeleteBlock: (blockId: string) => void }) {
+function ScheduleView({ data, activeDay, dayId, setDayId, warnings, covered, required, reviewTarget, reviewElementRef, onReview, onCell, onAddBlock, onImport, onEditBlock, onDuplicateBlock, onDeleteBlock }: { data: EventState; activeDay: EventDay; dayId: string; setDayId: (id: string) => void; warnings: ScheduleWarning[]; covered: number; required: number; reviewTarget: ScheduleReviewTarget | null; reviewElementRef: (element: HTMLElement | null) => void; onReview: (target: ScheduleReviewTarget) => void; onCell: (blockId: string, personId: string, assignmentId?: string) => void; onAddBlock: () => void; onImport: () => void; onEditBlock: (blockId: string) => void; onDuplicateBlock: (blockId: string) => void; onDeleteBlock: (blockId: string) => void }) {
   if (!activeDay.blocks.length) return <div className="content schedule-content"><div className="section-title"><div><span className="kicker">Schedule</span><h2>Add the event schedule</h2><p>Import a day from Google Docs or add blocks manually. Locations can be filled in later.</p></div><DayToggle data={data} dayId={dayId} setDayId={setDayId} /></div><section className="empty-builder"><span>01</span><h3>No blocks yet</h3><p>Paste a table or time-based schedule from the planning document.</p><div className="empty-actions"><button className="button primary" onClick={onImport}>Import from Google Docs</button><button className="button secondary" onClick={onAddBlock}>+ Add block</button></div></section></div>;
   const blocks = sortBlocks(activeDay.blocks);
   const timeframes = blocks.reduce<{ start: string; end: string; blocks: EventBlock[] }[]>((groups, block) => {
@@ -928,9 +943,9 @@ function ScheduleView({ data, activeDay, dayId, setDayId, warnings, covered, req
         <div className="timeline" style={{ "--columns": blocks.length } as React.CSSProperties}>
           <div className="timeline-corner">Person</div>
           {timeframes.map((timeframe) => <div className="timeframe-head" key={`${timeframe.start}-${timeframe.end}`} style={{ gridColumn: `span ${timeframe.blocks.length}` }}><strong>{timeframe.start}–{timeframe.end}</strong><span>{timeframe.blocks.length > 1 ? `${timeframe.blocks.length} concurrent events` : "1 event"}</span></div>)}
-          {blocks.map((block) => <div className="block-head-wrap" key={block.id} style={{ background: block.color }}><button className="block-head" onClick={() => onEditBlock(block.id)} aria-label={`Edit ${block.label}`}><strong>{block.label}</strong><span>{block.location || "Location not set"}</span></button><button className="duplicate-block" onClick={() => onDuplicateBlock(block.id)} aria-label={`Duplicate ${block.label}`} title="Duplicate block">⧉</button><button className="delete-block" onClick={() => onDeleteBlock(block.id)} aria-label={`Delete ${block.label}`} title="Delete block">×</button></div>)}
-          {data.people.map((person) => <div className="timeline-row" key={person.id}>
-            <div className="person-cell"><PersonAvatar person={person} small /><div><strong>{person.name}</strong><small>{activeDay.assignments.filter((a) => a.personId === person.id).length} roles</small></div></div>
+          {blocks.map((block) => { const reviewingBlock = reviewTarget?.dayId === activeDay.id && reviewTarget.blockId === block.id && !reviewTarget.personId; return <div className="block-head-wrap" key={block.id} style={{ background: block.color }}><button ref={reviewingBlock ? reviewElementRef : undefined} data-review-highlight={reviewingBlock || undefined} className={`block-head ${reviewingBlock ? "review-highlight" : ""}`} onClick={() => onEditBlock(block.id)} aria-label={`Edit ${block.label}`}><strong>{block.label}</strong><span>{block.location || "Location not set"}</span></button><button className="duplicate-block" onClick={() => onDuplicateBlock(block.id)} aria-label={`Duplicate ${block.label}`} title="Duplicate block">⧉</button><button className="delete-block" onClick={() => onDeleteBlock(block.id)} aria-label={`Delete ${block.label}`} title="Delete block">×</button></div>; })}
+          {data.people.map((person) => { const reviewingPerson = reviewTarget?.dayId === activeDay.id && reviewTarget.personId === person.id && !reviewTarget.blockId; return <div className="timeline-row" key={person.id}>
+            <div ref={reviewingPerson ? reviewElementRef : undefined} data-review-highlight={reviewingPerson || undefined} tabIndex={reviewingPerson ? -1 : undefined} className={`person-cell ${reviewingPerson ? "review-highlight" : ""}`}><PersonAvatar person={person} small /><div><strong>{person.name}</strong><small>{activeDay.assignments.filter((a) => a.personId === person.id).length} roles</small></div></div>
             {blocks.map((block) => {
               const assignment = activeDay.assignments.find((item) => item.personId === person.id && item.blockId === block.id);
               const conflict = findAssignmentConflict(activeDay, person.id, block.id, assignment?.id);
@@ -939,15 +954,17 @@ function ScheduleView({ data, activeDay, dayId, setDayId, warnings, covered, req
               const teammates = roleAssignments.filter((item) => item.personId !== person.id).map((item) => data.people.find((candidate) => candidate.id === item.personId)?.name).filter(Boolean);
               const lead = assignment ? assignmentLeadName(assignment, data.people) : "";
               const conflictReason = conflict ? `Unavailable: already assigned to ${conflict.block.label} (${conflict.block.start}–${conflict.block.end})` : "";
-              return <button className={`assignment-cell ${availability}`} key={block.id} onClick={() => onCell(block.id, person.id, assignment?.id)} title={conflictReason || (assignment ? `Lead: ${lead}${teammates.length ? ` · With ${teammates.join(", ")}` : ""}` : `Assign ${person.name} to ${block.label}`)} aria-label={`${person.name}, ${block.label}${conflictReason ? `, ${conflictReason}` : assignment ? `, ${assignment.role}, lead ${lead}${teammates.length ? `, with ${teammates.join(", ")}` : ""}` : ", add assignment"}`}>
+              const reviewingCell = reviewTarget?.dayId === activeDay.id && reviewTarget.personId === person.id && reviewTarget.blockId === block.id;
+              const reviewContext = reviewingCell && availability === "unavailable" ? ", highlighted unavailable conflict" : "";
+              return <button ref={reviewingCell ? reviewElementRef : undefined} data-review-highlight={reviewingCell || undefined} className={`assignment-cell ${availability} ${reviewingCell ? "review-highlight" : ""}`} key={block.id} onClick={() => onCell(block.id, person.id, assignment?.id)} title={conflictReason || (assignment ? `Lead: ${lead}${teammates.length ? ` · With ${teammates.join(", ")}` : ""}` : `Assign ${person.name} to ${block.label}`)} aria-label={`${person.name}, ${block.label}${conflictReason ? `, ${conflictReason}` : assignment ? `, ${assignment.role}, lead ${lead}${teammates.length ? `, with ${teammates.join(", ")}` : ""}` : ", add assignment"}${reviewContext}`}>
                 {assignment ? <span className="role-chip" style={{ background: assignment.color }}><span><b>{assignment.role}</b><small>Lead: {lead}{teammates.length ? ` · +${teammates.length}` : ""}</small></span><i>{assignment.intensity.slice(0, 1)}</i></span> : <span className="add-role">+</span>}
               </button>;
             })}
-          </div>)}
+          </div>; })}
         </div>
       </div>
     </section>
-    <section className="attention-section"><div className="subhead"><div><span className="kicker">Human review</span><h3>What needs your judgment</h3></div><button className="text-button">View all checks →</button></div><div className="warning-grid">{warnings.slice(0, 3).map((warning, index) => <article key={`${warning.title}-${index}`}><span className={`warning-type w-${warning.level.toLowerCase()}`}>{warning.level}</span><h4>{warning.title}</h4><p>{warning.detail}</p><button onClick={onReview}>Review in schedule <span>→</span></button></article>)}</div></section>
+    <section className="attention-section"><div className="subhead"><div><span className="kicker">Human review</span><h3>What needs your judgment</h3></div><button className="text-button">View all checks →</button></div><div className="warning-grid">{warnings.slice(0, 3).map((warning, index) => <article key={`${warning.title}-${index}`}><span className={`warning-type w-${warning.level.toLowerCase()}`}>{warning.level}</span><h4>{warning.title}</h4><p>{warning.detail}</p><button onClick={() => onReview(warning.reviewTarget)}>Review in schedule <span>→</span></button></article>)}</div></section>
   </div>;
 }
 
@@ -1166,9 +1183,9 @@ function ExecView({ data, person, dayId, setDayId, section, setSection, onAvaila
   const next = assignments[0];
   const nextBlock = day.blocks.find((block) => block.id === next?.blockId);
   const eventRoles = data.days.flatMap((eventDay) => eventDay.blocks.flatMap((block) => blockRoles(block).map((role) => ({ role, block: `${eventDay.label} · ${block.label}` })))).filter((entry, index, entries) => entries.findIndex((item) => item.role.name === entry.role.name) === index);
-  return <div className="exec-app"><header className="exec-header"><button className="exec-brand" onClick={() => setSection("today")}><span>R</span> relay</button><div><button className="icon-button" aria-label="Notifications">•<span /></button><button className="exec-profile"><PersonAvatar person={person} /><span>{person.name}</span></button><button className="exit-preview" onClick={onExit}>{section === "schedule" ? "Back to scheduling" : "Exit preview"}</button></div></header><main>
+  return <div className="exec-app"><header className="exec-header"><button className="exec-brand" onClick={() => setSection("today")}><span>R</span> relay</button><div><button className="icon-button" aria-label="Notifications">•<span /></button><button className="exec-profile"><PersonAvatar person={person} /><span>{person.name}</span></button><button className="exit-preview" onClick={onExit}>Exit preview</button></div></header><main>
     {section === "today" && <><section className="exec-welcome"><div><span className="kicker">Good morning, {person.name}</span><h1>My day</h1><p>{day.date} · {data.venue}</p></div><DayToggle data={data} dayId={dayId} setDayId={setDayId} /></section>{next && nextBlock ? <section className="next-card"><div className="next-time"><span>NEXT UP</span><strong>{nextBlock.start}</strong><small>{nextBlock.end}</small></div><div className="next-main"><span className="role-label" style={{ background: next.color }}>{next.role}</span><h2>{nextBlock.label}</h2><p className="next-place">{nextBlock.location ? `⌖ ${nextBlock.location} · ` : ""}Lead: {assignmentLeadName(next, data.people)}</p><p>{next.description}</p><div className="next-people"><span>With</span>{day.assignments.filter((a) => a.blockId === next.blockId && a.role === next.role && a.personId !== person.id).slice(0, 3).map((a) => <PersonAvatar key={a.id} small person={data.people.find((p) => p.id === a.personId)!} />)}</div></div><button className="acknowledge">✓ I’m ready</button></section> : null}<section className="my-day"><div className="subhead"><div><span className="kicker">Itinerary</span><h3>{assignments.length} roles today</h3></div><button className="text-button" onClick={() => setSection("schedule")}>Whole event →</button></div><div className="itinerary">{assignments.map((assignment, index) => { const block = day.blocks.find((item) => item.id === assignment.blockId)!; return <article key={assignment.id} className={index === 0 ? "current" : ""}><div className="itinerary-time"><strong>{block.start}</strong><span>{block.end}</span></div><i style={{ background: assignment.color }} /><div><span>{block.label}</span><h4>{assignment.role}</h4><p>{block.location ? `${block.location} · ` : ""}{assignmentLeadName(assignment, data.people)}</p></div><button aria-label={`Open ${assignment.role}`}>→</button></article>; })}</div></section><section className="quick-links"><div className="subhead"><div><span className="kicker">Event overview</span><h3>Day-of links</h3></div><button className="text-button" onClick={() => setSection("overview")}>View all →</button></div><div>{data.resources.filter((resource) => resource.dayOf && resource.url).slice(0, 4).map((resource) => <a href={resource.url} key={resource.id}><span>{resource.group.slice(0, 2).toUpperCase()}</span><strong>{resource.label}</strong><b>↗</b></a>)}</div></section></>}
-    {section === "schedule" && <section className="exec-full-schedule"><span className="kicker">{data.draftChanges ? "Schedule review" : "Published schedule"}</span><h1>Event schedule</h1><p>{data.draftChanges ? `Reviewing current assignments, including ${data.draftChanges} unpublished edit${data.draftChanges === 1 ? "" : "s"}.` : "Every block, role, and assignment."}</p>{data.days.map((scheduleDay) => <section className="exec-schedule-day" key={scheduleDay.id}><header><span>{scheduleDay.label}</span><h2>{scheduleDay.date}</h2></header><div>{scheduleDay.blocks.map((block) => { const assignmentsForBlock = scheduleDay.assignments.filter((assignment) => assignment.blockId === block.id); return <article key={block.id}><div className="full-schedule-time" style={{ background: block.color }}><strong>{block.start}</strong><span>{block.end}</span></div><div className="full-schedule-main"><span>{block.location || "Location not set"}</span><h3>{block.label}</h3><div className="full-role-list">{blockRoles(block).map((role) => { const roleAssignments = assignmentsForBlock.filter((assignment) => assignment.role === role.name); const lead = data.people.find((item) => item.id === role.leadPersonId); return <div key={role.id}><strong>{role.name}</strong><span>Lead: {lead?.name ?? (roleAssignments[0] ? assignmentLeadName(roleAssignments[0], data.people) : "TBD")}</span><small>{roleAssignments.map((assignment) => data.people.find((item) => item.id === assignment.personId)?.name).filter(Boolean).join(", ") || "Team not assigned"}</small></div>; })}</div></div></article>; })}</div></section>)}</section>}
+    {section === "schedule" && <section className="exec-full-schedule"><span className="kicker">Published schedule</span><h1>Event schedule</h1><p>Every block, role, and assignment.</p>{data.days.map((scheduleDay) => <section className="exec-schedule-day" key={scheduleDay.id}><header><span>{scheduleDay.label}</span><h2>{scheduleDay.date}</h2></header><div>{scheduleDay.blocks.map((block) => { const assignmentsForBlock = scheduleDay.assignments.filter((assignment) => assignment.blockId === block.id); return <article key={block.id}><div className="full-schedule-time" style={{ background: block.color }}><strong>{block.start}</strong><span>{block.end}</span></div><div className="full-schedule-main"><span>{block.location || "Location not set"}</span><h3>{block.label}</h3><div className="full-role-list">{blockRoles(block).map((role) => { const roleAssignments = assignmentsForBlock.filter((assignment) => assignment.role === role.name); const lead = data.people.find((item) => item.id === role.leadPersonId); return <div key={role.id}><strong>{role.name}</strong><span>Lead: {lead?.name ?? (roleAssignments[0] ? assignmentLeadName(roleAssignments[0], data.people) : "TBD")}</span><small>{roleAssignments.map((assignment) => data.people.find((item) => item.id === assignment.personId)?.name).filter(Boolean).join(", ") || "Team not assigned"}</small></div>; })}</div></div></article>; })}</div></section>)}</section>}
     {section === "prep" && <section className="exec-availability exec-prep"><span className="kicker">Before the event</span><h1>Prep compendium</h1><p>Choose your name, confirm when you can help, and review the tasks you own.</p><label className="availability-person-picker">I am<select value={person.id} onChange={(event) => onPersonChange(event.target.value)}>{data.people.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name} · {candidate.team}</option>)}</select></label><section className="availability-day"><header><span>Prep sessions</span><h2>Your availability</h2></header><div className="exec-availability-list">{data.prepSessions.map((session) => { const status = person.prepAvailability[session.id] ?? "available"; return <button className={status} key={session.id} onClick={() => onPrepAvailability(person.id, session.id)}><div><strong>{session.start}</strong><span>{session.end}</span></div><div><h3>{session.label}</h3><p>{session.date || "Date TBD"}{session.location ? ` · ${session.location}` : ""}</p></div><b>{status === "available" ? "Available" : status === "conditional" ? "Conditional" : "Unavailable"}</b></button>; })}</div></section><section className="exec-prep-tasks"><header><span>My checklist</span><h2>Prep responsibilities</h2></header>{data.prepTasks.filter((task) => task.ownerPersonId === person.id).map((task) => <article key={task.id} className={task.done ? "done" : ""}><span>{task.done ? "✓" : "○"}</span><div><strong>{task.label}</strong><p>{task.notes || "No extra instructions."}</p></div><small>{data.prepSessions.find((session) => session.id === task.sessionId)?.label ?? "Any session"}</small></article>)}{!data.prepTasks.some((task) => task.ownerPersonId === person.id) ? <p className="empty-copy">No prep tasks assigned to you yet.</p> : null}</section></section>}
     {section === "availability" && <section className="exec-availability"><span className="kicker">Your availability</span><h1>When are you free?</h1><p>Choose your name, then select the times you can be there. Your free time stays intact even if the schedule blocks change, and changes save automatically.</p><label className="availability-person-picker">I am<select value={person.id} onChange={(event) => onPersonChange(event.target.value)}>{data.people.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name} · {candidate.team}</option>)}</select></label><AvailabilityTimeGrid data={data} person={person} onToggle={(availabilityDayId, slotKey) => onAvailability(person.id, availabilityDayId, slotKey)} /></section>}
     {section === "overview" && <section className="exec-overview"><span className="kicker">Shared reference</span><h1>Event overview</h1><p>Day-of essentials and the complete resource library for {data.eventName}.</p><div className="overview-grid"><section className="overview-panel"><header><span>↗</span><div><h3>Day-of essentials</h3><p>{data.resources.filter((resource) => resource.dayOf && resource.url).length} ready links</p></div></header><div className="overview-group">{data.resources.filter((resource) => resource.dayOf && resource.url).map((resource) => <a href={resource.url} key={resource.id}><span>{resource.label}</span><b>Open ↗</b></a>)}</div></section><section className="overview-panel"><header><span>☎</span><div><h3>Important people</h3><p>{data.contacts.length} contacts</p></div></header><div className="contact-list">{data.contacts.map((contact) => <a href={`tel:${contact.phone}`} key={contact.id}><div><strong>{contact.name}</strong><span>{contact.role}</span></div><b>{contact.phone}</b></a>)}</div></section></div><section className="overview-panel event-library-panel"><header><span>≡</span><div><h3>Complete event library</h3><p>Planning and reference links</p></div></header>{Array.from(new Set(data.resources.filter((resource) => !resource.dayOf && resource.url).map((resource) => resource.group))).map((group) => <div className="overview-group" key={group}><h4>{group}</h4>{data.resources.filter((resource) => !resource.dayOf && resource.url && resource.group === group).map((resource) => <a href={resource.url} key={resource.id}><span>{resource.label}</span><b>Open ↗</b></a>)}</div>)}</section></section>}
