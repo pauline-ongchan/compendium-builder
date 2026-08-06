@@ -32,7 +32,8 @@ test("ships Relay product metadata and removes the starter preview", async () =>
   assert.match(workspace, /Scheduling checks/);
   assert.doesNotMatch(workspace, /Published \{data\.publishedAt\}/);
   assert.doesNotMatch(workspace, /Last publish \{data\.publishedAt\}/);
-  assert.match(workspace, /setDayCountInput\(event\.target\.value\)/);
+  assert.match(workspace, /onInput=\{\(event\) => setDayCountInput\(event\.currentTarget\.value\)\}/);
+  assert.match(workspace, /onBlur=\{\(event\) => setDayCountInput\(event\.currentTarget\.value\)\}/);
   assert.match(workspace, /aria-describedby=\{dayCount\.error/);
   assert.doesNotMatch(workspace, /setDayCount\(Math\.max/);
   assert.doesNotMatch(workspace, /Build the flow, keep the judgment/);
