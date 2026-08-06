@@ -11,11 +11,10 @@ import {
 } from "./availability";
 import { publishEventState } from "./event-state-client";
 import { parseScheduleTable } from "./schedule-import";
-import { getScheduleChecksViewState, type ScheduleCheck } from "./schedule-checks";
+import { getScheduleChecksViewState, scheduleMutationAffectsReviewTarget, type ScheduleCheck, type ScheduleReviewTarget } from "./schedule-checks";
 
 type Section = "schedule" | "prep" | "people" | "roles" | "judging" | "resources";
 type ExecSection = "today" | "schedule" | "prep" | "availability" | "overview" | "directory";
-type ScheduleReviewTarget = { dayId: string; blockId?: string; personId?: string };
 type ScheduleWarning = ScheduleCheck & { reviewTarget: ScheduleReviewTarget };
 
 type BlockLink = { id: string; label: string; url: string };
@@ -592,6 +591,10 @@ export function RelayWorkspace() {
     setSection("schedule");
   };
 
+  const clearScheduleReviewIfAffected = (mutationTarget: ScheduleReviewTarget) => {
+    setScheduleReviewTarget((current) => scheduleMutationAffectsReviewTarget(current, mutationTarget) ? null : current);
+  };
+
   const publish = async () => {
     setPublishing(true);
     setSaving(true);
@@ -633,6 +636,7 @@ export function RelayWorkspace() {
       }
     }
     next.draftChanges += 1;
+    clearScheduleReviewIfAffected({ dayId, blockId: drawer.blockId, personId: drawer.personId });
     setDrawer(null);
     void save(next, "Assignment saved to the shared event.");
   };
@@ -644,6 +648,7 @@ export function RelayWorkspace() {
     const day = next.days.find((item) => item.id === dayId)!;
     day.assignments = day.assignments.filter((item) => item.id !== assignmentId);
     next.draftChanges += 1;
+    clearScheduleReviewIfAffected({ dayId, blockId: assignment.blockId, personId: assignment.personId });
     setDrawer(null);
     void save(next, "Assignment removed. Overlapping time is available again.");
   };
@@ -675,6 +680,7 @@ export function RelayWorkspace() {
     else day.blocks.push(block);
     day.blocks = sortBlocks(day.blocks);
     next.draftChanges += 1;
+    clearScheduleReviewIfAffected({ dayId, blockId: block.id });
     setBlockEditor(null);
     void save(next, existingIndex >= 0 ? "Block updated everywhere." : "Block added to the schedule.");
   };
@@ -704,6 +710,7 @@ export function RelayWorkspace() {
     day.blocks = day.blocks.filter((item) => item.id !== blockId);
     day.assignments = day.assignments.filter((assignment) => assignment.blockId !== blockId);
     next.draftChanges += 1;
+    clearScheduleReviewIfAffected({ dayId, blockId });
     void save(next, `${block.label} deleted from the schedule.`);
   };
 
