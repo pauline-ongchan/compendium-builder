@@ -5,7 +5,7 @@ import { roleTemplates } from "../../../db/schema";
 export async function GET() {
   try {
     await ensureDb();
-    const roles = await getDb().select({ id: roleTemplates.id, name: roleTemplates.name, description: roleTemplates.description }).from(roleTemplates).orderBy(asc(roleTemplates.name));
+    const roles = await getDb().select({ id: roleTemplates.id, name: roleTemplates.name, description: roleTemplates.description, color: roleTemplates.color }).from(roleTemplates).orderBy(asc(roleTemplates.name));
     return Response.json({ roles });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Unable to load role library" }, { status: 500 });
@@ -20,9 +20,10 @@ export async function PUT(request: Request) {
     }
     await ensureDb();
     const updatedBy = request.headers.get("oai-authenticated-user-email") ?? "local-director";
-    await getDb().insert(roleTemplates).values({ id: role.id, name: role.name.trim(), description: typeof role.description === "string" ? role.description.trim() : "", updatedBy }).onConflictDoUpdate({
+    const color = typeof role.color === "string" && /^#[0-9a-f]{6}$/i.test(role.color) ? role.color : "#d8d2ef";
+    await getDb().insert(roleTemplates).values({ id: role.id, name: role.name.trim(), description: typeof role.description === "string" ? role.description.trim() : "", color, updatedBy }).onConflictDoUpdate({
       target: roleTemplates.id,
-      set: { name: role.name.trim(), description: typeof role.description === "string" ? role.description.trim() : "", updatedBy, updatedAt: new Date().toISOString() },
+      set: { name: role.name.trim(), description: typeof role.description === "string" ? role.description.trim() : "", color, updatedBy, updatedAt: new Date().toISOString() },
     });
     return Response.json({ ok: true });
   } catch (error) {

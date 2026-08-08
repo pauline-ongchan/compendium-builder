@@ -36,8 +36,10 @@ export async function ensureDb() {
       id TEXT PRIMARY KEY NOT NULL,
       name TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
+      color TEXT NOT NULL DEFAULT '#d8d2ef',
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_by TEXT
     )
   `);
+  await db.execute(sql`ALTER TABLE role_templates ADD COLUMN IF NOT EXISTS color TEXT NOT NULL DEFAULT '#d8d2ef'`);
 }
