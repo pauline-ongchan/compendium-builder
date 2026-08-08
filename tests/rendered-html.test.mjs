@@ -51,6 +51,15 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.match(workspace, /aria-activedescendant/);
   assert.match(workspace, /No role lead/);
   assert.match(workspace, /Esc to clear/);
+  assert.match(workspace, /Search or create a role/);
+  assert.match(workspace, /Clear \$\{assignment\.role\} from \$\{person\.name\}/);
+  assert.match(workspace, /dragGestureRef/);
+  assert.match(workspace, /pointermove/);
+  assert.match(workspace, /onMoveAssignment/);
+  assert.match(workspace, /Add to the block header and assign it/);
+  assert.match(workspace, /role="alertdialog"/);
+  assert.match(workspace, /Delete block/);
+  assert.doesNotMatch(workspace, /window\.confirm\(`Delete “\$\{block\.label\}/);
   assert.doesNotMatch(workspace, /<option value="">Event Directors<\/option>/);
   assert.match(workspace, /Full screen/);
   assert.match(workspace, /schedule-focus-active/);
@@ -69,6 +78,10 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.match(styles, /\.board-card\.focused\s*\{[^}]*position:\s*fixed;[^}]*inset:\s*0/);
   assert.match(styles, /schedule-focus-active \.drawer-backdrop\s*\{[^}]*z-index:\s*90/);
   assert.match(styles, /\.assignment-cell\.review-target/);
+  assert.match(styles, /\.assignment-cell\.drag-target/);
+  assert.match(styles, /\.assignment-clear/);
+  assert.match(styles, /\.assignment-role-picker/);
+  assert.match(styles, /\.setup-dialog\.confirm-dialog/);
   assert.match(styles, /\.delete-block\s*\{[^}]*top:\s*39px/);
   assert.doesNotMatch(workspace, /className="stat-strip"/);
   assert.doesNotMatch(workspace, /level:\s*"Lead"|level:\s*"Workload"/);
