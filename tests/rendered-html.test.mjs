@@ -47,6 +47,11 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.match(workspace, /Edit role/);
   assert.match(workspace, /Assign available rest/);
   assert.match(workspace, /Search role library/);
+  assert.match(workspace, /moveRoleOptionIndex/);
+  assert.match(workspace, /aria-activedescendant/);
+  assert.match(workspace, /No role lead/);
+  assert.match(workspace, /Esc to clear/);
+  assert.doesNotMatch(workspace, /<option value="">Event Directors<\/option>/);
   assert.match(workspace, /Full screen/);
   assert.match(workspace, /schedule-focus-active/);
   assert.doesNotMatch(workspace, /Roles · select one to assign/);

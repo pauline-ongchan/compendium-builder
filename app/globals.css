@@ -123,8 +123,9 @@ button { color: inherit; }
 .block-details strong { margin: 6px 0 3px; font-size: 12px; }
 .block-details span { font-size: 8px; color: #5a6461; }
 .block-role-chips { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 5px; }
-.block-role-chips button { min-height: 25px; max-width: 100%; padding: 4px 6px 4px 8px; border: 1px solid rgba(20,32,30,.42); border-radius: 99px; background: rgba(255,255,255,.46); display: inline-flex; align-items: center; gap: 5px; cursor: pointer; font-size: 8px; font-weight: 760; }
-.block-role-chips button[aria-pressed="true"] { background: var(--acid); border-color: var(--ink); box-shadow: 0 2px 0 rgba(20,32,30,.12); }
+.block-role-chips button { min-height: 25px; max-width: 100%; padding: 4px 6px 4px 8px; border: 1px solid rgba(20,32,30,.42); border-radius: 99px; background: var(--role-color, rgba(255,255,255,.46)); display: inline-flex; align-items: center; gap: 5px; cursor: pointer; font-size: 8px; font-weight: 760; }
+.block-role-chips button[aria-pressed="true"] { border-color: var(--ink); box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--ink); }
+.block-role-chips button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
 .block-role-chips button:disabled { opacity: .45; cursor: default; }
 .block-role-chips button span { color: inherit; font-size: inherit; overflow: hidden; text-overflow: ellipsis; }
 .block-role-chips button b { min-width: 15px; height: 15px; padding: 0 3px; border-radius: 99px; background: rgba(20,32,30,.12); display: grid; place-items: center; font-family: var(--font-geist-mono); font-size: 7px; }
@@ -138,11 +139,12 @@ button { color: inherit; }
 .role-library-popover input { width: 100%; border: 0; outline: 0; font-size: 9px; }
 .role-library-popover > div { max-height: 240px; overflow-y: auto; }
 .role-library-popover > div > button { width: 100%; min-height: 47px; padding: 7px; border: 0; border-bottom: 1px solid var(--line); background: transparent; display: flex; align-items: center; justify-content: space-between; text-align: left; cursor: pointer; }
-.role-library-popover > div > button:hover { background: #f1efe7; }
+.role-library-popover > div > button:hover, .role-library-popover > div > button[data-highlighted="true"] { background: #e7efc4; box-shadow: inset 3px 0 var(--ink); }
 .role-library-popover strong, .role-library-popover small { display: block; }
 .role-library-popover strong { font-size: 9px; }
 .role-library-popover small { margin-top: 3px; color: var(--muted); font-size: 7px; white-space: normal; }
 .role-library-popover p { padding: 10px 7px; margin: 0; color: var(--muted); font-size: 8px; }
+.role-library-popover .role-search-hint { padding: 7px 7px 0; border-top: 1px solid var(--line); font-family: var(--font-geist-mono); font-size: 7px; text-align: right; }
 .timeline-row { display: contents; }
 .person-cell, .assignment-cell { height: 64px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .person-cell { position: sticky; left: 0; z-index: 3; background: var(--panel); display: flex; align-items: center; gap: 8px; padding: 6px 10px; }
