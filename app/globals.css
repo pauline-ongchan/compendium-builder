@@ -465,9 +465,13 @@ button { color: inherit; }
 .toast span { color: var(--acid); font-weight: 900; }
 .toast.error { background: #7c2626; }
 .toast.error span { color: #ffd2d2; }
-.toast { position: fixed; right: 24px; bottom: 24px; z-index: 80; background: var(--ink); color: white; border-radius: 10px; padding: 12px 16px; display: flex; align-items: center; gap: 9px; font-size: 11px; box-shadow: 0 14px 36px rgba(20,32,30,.25); }
-.toast span { color: var(--acid); font-weight: 900; }
 .toast button { margin-left: 5px; padding: 0; border: 0; background: transparent; color: var(--acid); text-decoration: underline; font-size: 10px; font-weight: 800; cursor: pointer; }
+
+.share-link-dialog { width: min(620px, 100%); }
+.share-link-body { padding: 20px 22px; display: grid; gap: 9px; }
+.share-link-body label { display: grid; gap: 7px; color: var(--muted); font-size: 8px; text-transform: uppercase; letter-spacing: .08em; font-weight: 720; }
+.share-link-body input { width: 100%; min-height: 43px; padding: 10px 12px; border: 1px solid var(--ink); border-radius: 7px; background: white; color: var(--ink); font-family: var(--font-geist-mono); font-size: 10px; }
+.share-link-body p { margin: 0; color: var(--muted); font-size: 9px; }
 
 .board-toolbar-actions { display: flex; align-items: center; gap: 15px; }
 .board-focus { min-height: 32px; padding: 0 10px; border: 1px solid #aeb5af; background: transparent; font-size: 9px; font-weight: 750; cursor: pointer; }
@@ -614,16 +618,16 @@ button { color: inherit; }
 .setup-dialog.block-dialog { width: min(850px, 100%); }
 .setup-dialog.checks-dialog { width: min(760px, 100%); }
 .setup-dialog.confirm-dialog { width: min(470px, 100%); border-radius: 10px; overflow: hidden; }
+.setup-dialog.confirm-dialog > header { position: relative; justify-content: center; padding: 34px 50px; text-align: center; }
+.setup-dialog.confirm-dialog > header > div { width: 100%; display: grid; justify-items: center; text-align: center; }
+.setup-dialog.confirm-dialog > header h2 { margin: 0 0 10px; }
+.setup-dialog.confirm-dialog > header p { font-size: 11px; }
+.setup-dialog.confirm-dialog > header > button { position: absolute; top: 14px; right: 14px; }
 .setup-dialog > header { padding: 20px 22px; border-bottom: 1px solid var(--ink); display: flex; justify-content: space-between; gap: 20px; }
 .setup-dialog > header h2 { margin: 5px 0; font-size: 28px; letter-spacing: -1.2px; }
 .setup-dialog > header p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .setup-dialog > header > button { width: 32px; height: 32px; border: 1px solid var(--line); background: transparent; border-radius: 50%; font-size: 18px; cursor: pointer; }
 .setup-dialog > footer { padding: 14px 22px; border-top: 1px solid var(--ink); display: flex; justify-content: flex-end; gap: 8px; }
-.confirm-dialog-body { padding: 18px 22px; display: grid; grid-template-columns: 38px 1fr; align-items: center; gap: 12px; background: #fff8f5; }
-.confirm-dialog-body > span { width: 38px; height: 38px; border-radius: 50%; background: #f1d1cb; color: #7d3028; display: grid; place-items: center; font-family: var(--font-geist-mono); font-size: 16px; font-weight: 850; }
-.confirm-dialog-body strong, .confirm-dialog-body p { margin: 0; }
-.confirm-dialog-body strong { font-size: 11px; }
-.confirm-dialog-body p { margin-top: 4px; color: var(--muted); font-size: 9px; line-height: 1.5; }
 .checks-dialog-body { min-height: 260px; padding: 18px 22px; overflow-y: auto; }
 .checks-error { margin-bottom: 12px; padding: 12px 14px; border: 1px solid #b65d54; background: #fff0ed; color: #762b24; }
 .checks-error strong, .checks-error p { display: block; margin: 0; }
