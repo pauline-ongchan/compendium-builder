@@ -528,6 +528,7 @@ export function RelayWorkspace() {
   const [roleEditor, setRoleEditor] = useState<{ blockId: string; blockRoleId: string; assignmentId?: string } | null>(null);
   const [blockEditor, setBlockEditor] = useState<{ blockId?: string } | null>(null);
   const [deleteBlockId, setDeleteBlockId] = useState<string | null>(null);
+  const [roleRemoval, setRoleRemoval] = useState<{ dayId: string; blockId: string; blockRoleId: string } | null>(null);
   const [showNewEvent, setShowNewEvent] = useState(false);
   const [showEventLibrary, setShowEventLibrary] = useState(false);
   const [showScheduleImport, setShowScheduleImport] = useState(false);
@@ -893,19 +894,26 @@ export function RelayWorkspace() {
     window.setTimeout(() => setScheduleReviewTarget({ dayId: check.dayId!, blockId: check.blockId!, personId: check.personId!, nonce: Date.now() }), 0);
   };
 
-  const removeBlockRole = (blockId: string, blockRoleId: string) => {
-    const assignedCount = activeDay.assignments.filter((item) => item.blockId === blockId && item.blockRoleId === blockRoleId).length;
-    if (assignedCount && !window.confirm(`Remove this role and unassign ${assignedCount} people from this block?`)) return;
+  const requestBlockRoleRemoval = (blockId: string, blockRoleId: string) => {
+    setRoleRemoval({ dayId, blockId, blockRoleId });
+  };
+
+  const removeBlockRole = () => {
+    if (!roleRemoval) return;
     const previous = structuredClone(data);
     const next = structuredClone(data);
-    const day = next.days.find((item) => item.id === dayId)!;
-    const block = day.blocks.find((item) => item.id === blockId)!;
-    const role = blockRoles(block).find((item) => item.id === blockRoleId);
-    if (!role) return;
-    block.roles = blockRoles(block).filter((item) => item.id !== blockRoleId);
+    const day = next.days.find((item) => item.id === roleRemoval.dayId);
+    const block = day?.blocks.find((item) => item.id === roleRemoval.blockId);
+    const role = block && blockRoles(block).find((item) => item.id === roleRemoval.blockRoleId);
+    if (!day || !block || !role) {
+      setRoleRemoval(null);
+      return;
+    }
+    block.roles = blockRoles(block).filter((item) => item.id !== roleRemoval.blockRoleId);
     block.requiredRoles = block.roles.map((item) => item.name);
-    day.assignments = day.assignments.filter((item) => item.blockId !== blockId || item.blockRoleId !== blockRoleId);
+    day.assignments = day.assignments.filter((item) => item.blockId !== roleRemoval.blockId || item.blockRoleId !== roleRemoval.blockRoleId);
     next.draftChanges += 1;
+    setRoleRemoval(null);
     setRoleEditor(null);
     setSelectedRoles((current) => ({ ...current, [block.id]: "" }));
     void save(next, `${role.name} removed from ${block.label}.`, previous);
@@ -913,7 +921,7 @@ export function RelayWorkspace() {
 
   const removeRoleFromBlock = () => {
     if (!roleEditor || roleEditor.assignmentId) return;
-    removeBlockRole(roleEditor.blockId, roleEditor.blockRoleId);
+    requestBlockRoleRemoval(roleEditor.blockId, roleEditor.blockRoleId);
   };
 
   const updateAvailability = (personId: string, availabilityDayId: string, slotKey: string) => {
@@ -1260,6 +1268,10 @@ export function RelayWorkspace() {
     ...(data.judgingEnabled ? [["judging", "Judging rooms", "05"]] as [Section, string, string][] : []),
     ["resources", "Event overview", data.judgingEnabled ? "06" : "05"],
   ];
+  const roleRemovalDay = roleRemoval ? data.days.find((day) => day.id === roleRemoval.dayId) : undefined;
+  const roleRemovalBlock = roleRemovalDay?.blocks.find((block) => block.id === roleRemoval?.blockId);
+  const roleRemovalRole = roleRemovalBlock && roleRemoval ? blockRoles(roleRemovalBlock).find((role) => role.id === roleRemoval.blockRoleId) : undefined;
+  const roleRemovalAssignmentCount = roleRemovalDay && roleRemoval ? roleRemovalDay.assignments.filter((assignment) => assignment.blockId === roleRemoval.blockId && assignment.blockRoleId === roleRemoval.blockRoleId).length : 0;
 
   return (
     <div className={`app-shell ${mode === "exec" ? "exec-shell" : ""} ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
@@ -1282,7 +1294,7 @@ export function RelayWorkspace() {
               <div className="header-actions"><span className={`save-state ${saving ? "saving" : ""}`}>{publishing ? "Publishing…" : saving ? "Saving…" : hydrated ? "All changes saved" : "Connecting…"}</span><button className="button secondary" onClick={() => setShowEventSettings(true)}>Settings</button><button className="button secondary" onClick={() => setShowNewEvent(true)}>+ New event</button><button className="button secondary" onClick={() => setMode("exec")}>Exec view</button><button className="button primary" onClick={() => void publish()} disabled={data.draftChanges === 0 || publishing}>{publishing ? "Publishing…" : `Publish ${data.draftChanges ? `${data.draftChanges} changes` : "changes"}`}</button></div>
             </header>
 
-            {section === "schedule" && <ScheduleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} warnings={warnings} reviewTarget={scheduleReviewTarget} selectedRoles={selectedRoles} boardLocked={boardLocked} roleTemplates={roleTemplates} onToggleLock={toggleBoardLock} onSelectRole={toggleSelectedRole} onCell={changeAssignment} onAssignRole={assignBlockRoleToPerson} onClearAssignment={clearAssignment} onMoveAssignment={moveAssignment} onAddRole={addScheduleRoleToBlock} onCreateRole={createAndAddRole} onEditRole={(blockId, blockRoleId) => setRoleEditor({ blockId, blockRoleId })} onRemoveRole={removeBlockRole} onAssignRest={assignRestToOnCall} onAddBlock={() => setBlockEditor({})} onImport={() => setShowScheduleImport(true)} onEditBlock={(blockId) => setBlockEditor({ blockId })} onDuplicateBlock={duplicateBlock} onDeleteBlock={setDeleteBlockId} onReview={reviewScheduleCheck} onViewAll={() => setShowScheduleChecks(true)} />}
+            {section === "schedule" && <ScheduleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} warnings={warnings} reviewTarget={scheduleReviewTarget} selectedRoles={selectedRoles} boardLocked={boardLocked} roleTemplates={roleTemplates} onToggleLock={toggleBoardLock} onSelectRole={toggleSelectedRole} onCell={changeAssignment} onAssignRole={assignBlockRoleToPerson} onClearAssignment={clearAssignment} onMoveAssignment={moveAssignment} onAddRole={addScheduleRoleToBlock} onCreateRole={createAndAddRole} onEditRole={(blockId, blockRoleId) => setRoleEditor({ blockId, blockRoleId })} onRemoveRole={requestBlockRoleRemoval} onAssignRest={assignRestToOnCall} onAddBlock={() => setBlockEditor({})} onImport={() => setShowScheduleImport(true)} onEditBlock={(blockId) => setBlockEditor({ blockId })} onDuplicateBlock={duplicateBlock} onDeleteBlock={setDeleteBlockId} onReview={reviewScheduleCheck} onViewAll={() => setShowScheduleChecks(true)} />}
             {section === "prep" && <PrepView data={data} onSave={savePrep} onShare={sharePrep} />}
             {section === "people" && <PeopleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} onManageRoster={() => setShowRoster(true)} onShareAvailability={shareAvailability} onEditProfile={setProfilePersonId} />}
             {section === "roles" && <RolesView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} roleTemplates={roleTemplates} onOpen={(blockId, blockRoleId) => setRoleEditor({ blockId, blockRoleId })} onEditBlock={(blockId) => setBlockEditor({ blockId })} onAddRoleToBlock={addLibraryRoleToBlock} onCreateRole={() => setRoleTemplateEditor({})} onEditRole={(templateId) => setRoleTemplateEditor({ templateId })} onImport={() => setShowRoleImport(true)} />}
@@ -1301,6 +1313,7 @@ export function RelayWorkspace() {
           {showEventSettings && <EventSettingsDialog data={data} onClose={() => setShowEventSettings(false)} onSave={saveEventSettings} />}
           {showScheduleChecks && <ScheduleChecksDialog checks={warnings} loading={!hydrated} error={loadError} onReview={reviewScheduleCheck} onClose={() => setShowScheduleChecks(false)} />}
           {deleteBlockId && activeDay.blocks.some((block) => block.id === deleteBlockId) ? <DeleteBlockDialog block={activeDay.blocks.find((block) => block.id === deleteBlockId)!} assignmentCount={activeDay.assignments.filter((assignment) => assignment.blockId === deleteBlockId).length} onClose={() => setDeleteBlockId(null)} onConfirm={() => deleteBlock(deleteBlockId)} /> : null}
+          {roleRemovalBlock && roleRemovalRole ? <RemoveRoleDialog block={roleRemovalBlock} role={roleRemovalRole} assignmentCount={roleRemovalAssignmentCount} onClose={() => setRoleRemoval(null)} onConfirm={removeBlockRole} /> : null}
         </>
       ) : (
         <ExecView data={data} person={currentExec} dayId={dayId} setDayId={setDayId} section={execSection} setSection={setExecSection} onAvailability={updateAvailability} onPrepAvailability={updatePrepAvailability} onPersonChange={setExecPersonId} onExit={() => setMode("director")} />
@@ -1515,6 +1528,15 @@ function DeleteBlockDialog({ block, assignmentCount, onClose, onConfirm }: { blo
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [onClose]);
   return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-block-title" aria-describedby="delete-block-description"><header><div><span className="kicker">Delete schedule block</span><h2 id="delete-block-title">Remove “{block.label}”?</h2><p id="delete-block-description">This removes the block and {assignmentCount ? `${assignmentCount} assignment${assignmentCount === 1 ? "" : "s"}` : "its role setup"}. People’s time-based availability will be kept.</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="confirm-dialog-body"><span aria-hidden="true">!</span><div><strong>This change affects the whole schedule.</strong><p>You can use Undo immediately after deleting if you change your mind.</p></div></div><footer><button className="button secondary" onClick={onClose}>Keep block</button><button className="button danger" onClick={onConfirm} autoFocus>Delete block</button></footer></section></div>;
+}
+
+function RemoveRoleDialog({ block, role, assignmentCount, onClose, onConfirm }: { block: EventBlock; role: BlockRole; assignmentCount: number; onClose: () => void; onConfirm: () => void }) {
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+  return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="remove-role-title" aria-describedby="remove-role-description" onKeyDown={(event) => { if (event.key === "Escape") onClose(); }}><header><div><span className="kicker">Remove block role</span><h2 id="remove-role-title">Remove “{role.name}”?</h2><p id="remove-role-description">This removes the role from {block.label}{assignmentCount ? ` and unassigns ${assignmentCount} ${assignmentCount === 1 ? "person" : "people"}` : ""}. Their availability and other assignments will stay unchanged.</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="confirm-dialog-body"><span aria-hidden="true">!</span><div><strong>This change only affects {block.label}.</strong><p>You can use Undo immediately after removing the role if you change your mind.</p></div></div><footer><button className="button secondary" onClick={onClose}>Keep role</button><button className="button danger" onClick={onConfirm} autoFocus>Remove role</button></footer></section></div>;
 }
 
 function PrepView({ data, onSave, onShare }: { data: EventState; onSave: (sessions: PrepSession[], tasks: PrepTask[], availability: Record<string, Record<string, AvailabilityStatus>>) => void; onShare: () => void }) {

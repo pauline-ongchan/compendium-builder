@@ -77,7 +77,11 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.match(workspace, /Replace master/);
   assert.match(workspace, /role="alertdialog"/);
   assert.match(workspace, /Delete block/);
+  assert.match(workspace, /RemoveRoleDialog/);
+  assert.match(workspace, /Keep role/);
+  assert.match(workspace, /This change only affects \{block\.label\}/);
   assert.doesNotMatch(workspace, /window\.confirm\(`Delete “\$\{block\.label\}/);
+  assert.doesNotMatch(workspace, /window\.confirm\(`Remove this role/);
   assert.doesNotMatch(workspace, /<option value="">Event Directors<\/option>/);
   assert.match(workspace, /Full screen/);
   assert.match(workspace, /schedule-focus-active/);
