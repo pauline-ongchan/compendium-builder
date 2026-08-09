@@ -22,7 +22,8 @@ export function getDb() {
 }
 
 export async function ensureDb() {
-  await getDb().execute(sql`
+  const db = getDb();
+  await db.execute(sql`
     CREATE TABLE IF NOT EXISTS event_states (
       id TEXT PRIMARY KEY NOT NULL,
       payload TEXT NOT NULL,
@@ -30,4 +31,15 @@ export async function ensureDb() {
       updated_by TEXT
     )
   `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS role_templates (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      color TEXT NOT NULL DEFAULT '#d8d2ef',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_by TEXT
+    )
+  `);
+  await db.execute(sql`ALTER TABLE role_templates ADD COLUMN IF NOT EXISTS color TEXT NOT NULL DEFAULT '#d8d2ef'`);
 }

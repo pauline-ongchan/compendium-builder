@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("ships Relay product metadata and removes the starter preview", async () => {
-  const [page, layout, workspace] = await Promise.all([
+test("ships Relay product metadata and schedule-first role assignment", async () => {
+  const [page, layout, workspace, styles, roleApi, schema] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/relay-workspace.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/role-library/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
   ]);
 
   assert.match(page, /RelayWorkspace/);
@@ -28,8 +31,8 @@ test("ships Relay product metadata and removes the starter preview", async () =>
   assert.match(workspace, /Participant Registration/);
   assert.match(workspace, /Day-of essentials/);
   assert.match(workspace, /Duplicate/);
-  assert.match(workspace, /onClick=\{onViewAll\}>View all checks/);
-  assert.match(workspace, /Scheduling checks/);
+  assert.match(workspace, /onClick=\{onViewAll\}>Open review/);
+  assert.match(workspace, /Availability conflicts/);
   assert.doesNotMatch(workspace, /Published \{data\.publishedAt\}/);
   assert.doesNotMatch(workspace, /Last publish \{data\.publishedAt\}/);
   assert.match(workspace, /onInput=\{\(event\) => setDayCountInput\(event\.currentTarget\.value\)\}/);
@@ -38,5 +41,69 @@ test("ships Relay product metadata and removes the starter preview", async () =>
   assert.doesNotMatch(workspace, /setDayCount\(Math\.max/);
   assert.doesNotMatch(workspace, /Build the flow, keep the judgment/);
   assert.match(workspace, /Preview as exec/);
+  assert.match(workspace, /Collapse navigation/);
+  assert.match(workspace, /data\.draftChanges.*ahead/);
+  assert.match(workspace, /Unlocked/);
+  assert.match(workspace, /Edit role/);
+  assert.match(workspace, /Assign available rest/);
+  assert.match(workspace, /moveRoleOptionIndex/);
+  assert.match(workspace, /aria-activedescendant/);
+  assert.match(workspace, /No role lead/);
+  assert.match(workspace, /Esc to clear/);
+  assert.match(workspace, /Search or create a role/);
+  assert.match(workspace, /Change \$\{person\.name\}’s role/);
+  assert.match(workspace, /Remove assignment/);
+  assert.match(workspace, /Remove \$\{role\.name\} from \$\{block\.label\}/);
+  assert.match(workspace, /cell-teammates/);
+  assert.match(workspace, /Save failed:/);
+  assert.match(workspace, /Role library update failed:/);
+  assert.match(workspace, /Role color/);
+  assert.match(workspace, /New role color/);
+  assert.match(workspace, /nextRoleColor/);
+  assert.match(workspace, /Add or select a role/);
+  assert.match(workspace, /createPortal\(picker, document\.body\)/);
+  assert.match(workspace, /keepHighlightedRoleVisible/);
+  assert.match(workspace, /Clear \$\{assignment\.role\} from \$\{person\.name\}/);
+  assert.match(workspace, /dragGestureRef/);
+  assert.match(workspace, /pointermove/);
+  assert.match(workspace, /onMoveAssignment/);
+  assert.match(workspace, /Add this color and role to the shared library/);
+  assert.match(workspace, /role="alertdialog"/);
+  assert.match(workspace, /Delete block/);
+  assert.doesNotMatch(workspace, /window\.confirm\(`Delete “\$\{block\.label\}/);
+  assert.doesNotMatch(workspace, /<option value="">Event Directors<\/option>/);
+  assert.match(workspace, /Full screen/);
+  assert.match(workspace, /schedule-focus-active/);
+  assert.doesNotMatch(workspace, /Roles · select one to assign/);
+  assert.doesNotMatch(workspace, /Library default|Save library default|future additions only/);
+  assert.match(workspace, /Review \$\{check\.title\} in schedule/);
+  assert.match(workspace, /scrollIntoView/);
+  assert.match(workspace, /data-block-id=\{block\.id\}/);
+  assert.match(workspace, /blockRoleId/);
+  assert.match(styles, /\.timeline-scroll\s*\{[^}]*max-height:[^}]*overflow-y:\s*auto/);
+  assert.match(styles, /\.timeline-corner\s*\{[^}]*position:\s*sticky;[^}]*top:\s*0/);
+  assert.match(styles, /\.block-head\.assignment-ready\s*\{[^}]*position:\s*sticky;[^}]*top:\s*40px/);
+  assert.match(styles, /\.workspace-header\s*\{[^}]*position:\s*relative/);
+  assert.match(styles, /\.sidebar-collapsed \.workspace\s*\{[^}]*margin-left:\s*72px/);
+  assert.match(styles, /\.checks-table-row\s*\{/);
+  assert.match(styles, /\.board-card\.focused\s*\{[^}]*position:\s*fixed;[^}]*inset:\s*0/);
+  assert.match(styles, /schedule-focus-active \.drawer-backdrop\s*\{[^}]*z-index:\s*90/);
+  assert.match(styles, /\.assignment-cell\.review-target/);
+  assert.match(styles, /\.assignment-cell\.drag-target/);
+  assert.match(styles, /\.assignment-clear/);
+  assert.match(styles, /\.assignment-role-picker/);
+  assert.match(styles, /\.block-role-chip:hover \.block-role-remove/);
+  assert.match(styles, /\.cell-teammates/);
+  assert.match(styles, /\.role-color-field/);
+  assert.match(styles, /\.assignment-role-picker\s*\{[^}]*position:\s*fixed/);
+  assert.match(styles, /\.setup-dialog\.confirm-dialog/);
+  assert.match(styles, /\.delete-block\s*\{[^}]*top:\s*39px/);
+  assert.doesNotMatch(workspace, /className="stat-strip"/);
+  assert.doesNotMatch(workspace, /level:\s*"Lead"|level:\s*"Workload"/);
+  assert.doesNotMatch(workspace, /Intensity|People needed|Role coverage/);
+  assert.match(roleApi, /roleTemplates/);
+  assert.match(roleApi, /roleTemplates\.color/);
+  assert.match(schema, /role_templates/);
+  assert.match(schema, /color:\s*text\("color"\)/);
   assert.doesNotMatch(`${page}${layout}${workspace}`, /codex-preview|SkeletonPreview/);
 });
