@@ -369,13 +369,23 @@ button { color: inherit; }
 .empty-role-drop { display: block !important; min-height: 74px !important; color: var(--muted); text-align: center !important; font-size: 9px; }
 .button.danger { border-color: #9f4a40; color: #8f3e35; background: #fff3f1; }
 .push-left { margin-right: auto; }
-.similar-role-warning { border: 1px solid #d4ad55; background: #fff8df; padding: 10px; display: grid; gap: 7px; }
-.similar-role-warning > strong { font-size: 9px; }
-.similar-role-warning > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.similar-role-warning span, .similar-role-warning small { display: block; }
-.similar-role-warning b { font-size: 9px; }
-.similar-role-warning small { margin-top: 2px; color: var(--muted); font-size: 7px; }
-.similar-role-warning button { border: 1px solid rgba(20,32,30,.35); border-radius: 5px; background: white; padding: 6px 7px; cursor: pointer; font-size: 7px; font-weight: 750; }
+.similar-role-warning { border: 1px solid #c7aa57; border-radius: 10px; background: #fff9e7; padding: 13px; display: grid; gap: 11px; box-shadow: 0 6px 18px rgba(97,75,15,.06); }
+.similar-role-warning.exact-match { border-color: #c88867; background: #fff6ef; }
+.role-match-heading { display: grid; grid-template-columns: 28px 1fr; align-items: start; gap: 9px; }
+.role-match-heading > span { width: 28px; height: 28px; border-radius: 50%; background: #f1dda1; color: #6a510c; display: grid; place-items: center; font-size: 10px; font-weight: 850; }
+.exact-match .role-match-heading > span { background: #f3d1c1; color: #7d3d2b; }
+.role-match-heading strong, .role-match-heading p { display: block; margin: 0; }
+.role-match-heading strong { font-size: 10px; }
+.role-match-heading p { margin-top: 3px; color: var(--muted); font-size: 8px; line-height: 1.45; }
+.role-match-list { display: grid; gap: 7px; }
+.role-match-list article { min-height: 55px; border: 1px solid rgba(20,32,30,.18); border-radius: 8px; background: rgba(255,255,255,.72); padding: 9px; display: grid; grid-template-columns: 6px minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+.role-match-list article > i { width: 6px; height: 34px; border-radius: 99px; }
+.role-match-list span, .role-match-list small { display: block; min-width: 0; }
+.role-match-list b { font-size: 9px; }
+.role-match-list small { margin-top: 3px; color: var(--muted); font-size: 7px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.role-match-list button { border: 1px solid rgba(20,32,30,.4); border-radius: 6px; background: white; padding: 7px 9px; cursor: pointer; font-size: 7px; font-weight: 780; white-space: nowrap; }
+.role-match-list button:hover { background: var(--ink); color: white; }
+.role-merge-note { margin: -2px 0 0 37px; color: var(--muted); font-size: 7px; line-height: 1.45; }
 .setup-dialog.role-import-dialog { width: min(760px, 100%); }
 .import-template-button { justify-self: start; }
 .role-import-file input { padding: 9px; border: 1px dashed #8e9790; background: #f7f6ef; }

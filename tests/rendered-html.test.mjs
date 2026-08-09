@@ -70,6 +70,10 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.match(workspace, /Add to this event/);
   assert.match(workspace, /Add to event \+ library/);
   assert.match(workspace, /Search master roles/);
+  assert.match(workspace, /Role already exists/);
+  assert.match(workspace, /Open existing role/);
+  assert.match(workspace, /Merge into \$\{candidate\.name\}/);
+  assert.match(workspace, /Event-specific instructions, leads, and assignments remain unchanged/);
   assert.match(workspace, /Import reusable roles/);
   assert.match(workspace, /Description of responsibilities/);
   assert.match(workspace, /Customized/);
@@ -106,6 +110,8 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.match(styles, /\.block-role-chip:hover \.block-role-remove/);
   assert.match(styles, /\.cell-teammates/);
   assert.match(styles, /\.role-color-field/);
+  assert.match(styles, /\.similar-role-warning\.exact-match/);
+  assert.match(styles, /\.role-match-list article/);
   assert.match(styles, /\.assignment-role-picker\s*\{[^}]*position:\s*fixed/);
   assert.match(styles, /\.setup-dialog\.confirm-dialog/);
   assert.match(styles, /\.delete-block\s*\{[^}]*top:\s*39px/);
