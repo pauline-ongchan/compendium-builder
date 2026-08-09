@@ -1137,7 +1137,15 @@ export function RelayWorkspace() {
   const mergeRoleTemplates = async (sourceId: string, targetId: string) => {
     const source = roleTemplates.find((role) => role.id === sourceId);
     const target = roleTemplates.find((role) => role.id === targetId);
-    if (!source || !target || !window.confirm(`Merge “${source.name}” into “${target.name}”? Event-specific role details and assignments will stay unchanged.`)) return;
+    if (!source || !target) return;
+    const confirmed = await requestConfirmation({
+      title: `Merge “${source.name}” into “${target.name}”?`,
+      message: `“${target.name}” will remain in the master library. Event roles linked to “${source.name}” will point to it, while their event-specific instructions, leads, and assignments stay unchanged.`,
+      confirmLabel: "Merge roles",
+      cancelLabel: "Keep both",
+      tone: "danger",
+    });
+    if (!confirmed) return;
     try {
       const response = await fetch("/api/role-library", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "merge", sourceId, targetId }) });
       const payload = await response.json().catch(() => ({}));
@@ -1162,7 +1170,15 @@ export function RelayWorkspace() {
   const replaceMasterFromRole = async (blockId: string, blockRoleId: string) => {
     const block = activeDay.blocks.find((item) => item.id === blockId);
     const role = block && blockRoles(block).find((item) => item.id === blockRoleId);
-    if (!role?.templateId || !window.confirm(`Replace the master “${role.name}” template with this event version? Other event copies will stay unchanged.`)) return;
+    if (!role?.templateId) return;
+    const confirmed = await requestConfirmation({
+      title: `Replace master “${role.name}”?`,
+      message: "The master responsibilities and colour will be replaced with this event version. Copies already used in other events stay unchanged.",
+      confirmLabel: "Replace master",
+      cancelLabel: "Keep master",
+      tone: "danger",
+    });
+    if (!confirmed) return;
     try {
       const saved = await persistRoleTemplate({ id: role.templateId, name: role.name, description: role.description, color: blockRoleColor(role), normalizedName: normalizeRoleName(role.name), revision: role.templateRevision });
       setRoleTemplates((current) => [...current.filter((item) => item.id !== saved.id), saved].sort((a, b) => a.name.localeCompare(b.name)));
@@ -1187,7 +1203,15 @@ export function RelayWorkspace() {
         saved = await persistRoleTemplate({ id: `${roleTemplateId(role.name)}-${Date.now()}`, name: role.name, description: role.description, color: blockRoleColor(role) });
       } catch (error) {
         const existing = (error as Error & { existing?: RoleTemplate }).existing;
-        if (!existing || !window.confirm(`A master role named “${existing.name}” already exists. Replace it with this event version?`)) throw error;
+        if (!existing) throw error;
+        const confirmed = await requestConfirmation({
+          title: `Replace master “${existing.name}”?`,
+          message: "A master role with this name already exists. Its responsibilities and colour will be replaced with this event version; copies already used in other events stay unchanged.",
+          confirmLabel: "Replace master",
+          cancelLabel: "Keep existing role",
+          tone: "danger",
+        });
+        if (!confirmed) return;
         saved = await persistRoleTemplate({ ...existing, name: role.name, description: role.description, color: blockRoleColor(role) }, true);
       }
       setRoleTemplates((current) => [...current.filter((item) => item.id !== saved.id), saved].sort((a, b) => a.name.localeCompare(b.name)));
