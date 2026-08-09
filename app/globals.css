@@ -431,9 +431,14 @@ button { color: inherit; }
 .toast span { color: var(--acid); font-weight: 900; }
 .toast.error { background: #7c2626; }
 .toast.error span { color: #ffd2d2; }
-.toast { position: fixed; right: 24px; bottom: 24px; z-index: 80; background: var(--ink); color: white; border-radius: 10px; padding: 12px 16px; display: flex; align-items: center; gap: 9px; font-size: 11px; box-shadow: 0 14px 36px rgba(20,32,30,.25); }
-.toast span { color: var(--acid); font-weight: 900; }
 .toast button { margin-left: 5px; padding: 0; border: 0; background: transparent; color: var(--acid); text-decoration: underline; font-size: 10px; font-weight: 800; cursor: pointer; }
+
+.confirm-dialog-body.warning > span { background: #f1dc91; color: #5f490d; }
+.share-link-dialog { width: min(620px, 100%); }
+.share-link-body { padding: 20px 22px; display: grid; gap: 9px; }
+.share-link-body label { display: grid; gap: 7px; color: var(--muted); font-size: 8px; text-transform: uppercase; letter-spacing: .08em; font-weight: 720; }
+.share-link-body input { width: 100%; min-height: 43px; padding: 10px 12px; border: 1px solid var(--ink); border-radius: 7px; background: white; color: var(--ink); font-family: var(--font-geist-mono); font-size: 10px; }
+.share-link-body p { margin: 0; color: var(--muted); font-size: 9px; }
 
 .board-toolbar-actions { display: flex; align-items: center; gap: 15px; }
 .board-focus { min-height: 32px; padding: 0 10px; border: 1px solid #aeb5af; background: transparent; font-size: 9px; font-weight: 750; cursor: pointer; }
