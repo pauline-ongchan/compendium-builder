@@ -49,6 +49,14 @@ type Person = {
 
 type ExecGroup = { id: string; name: string; color: string };
 type ImportantContact = { id: string; name: string; role: string; phone: string };
+type ConfirmationRequest = {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  cancelLabel?: string;
+  tone?: "warning" | "danger";
+};
+type ShareLink = { title: string; message: string; url: string };
 
 type EventBlock = {
   id: string;
@@ -535,6 +543,21 @@ export function RelayWorkspace() {
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [confirmation, setConfirmation] = useState<ConfirmationRequest | null>(null);
+  const [shareLink, setShareLink] = useState<ShareLink | null>(null);
+  const confirmationResolver = useRef<((confirmed: boolean) => void) | null>(null);
+
+  const requestConfirmation = (request: ConfirmationRequest) => new Promise<boolean>((resolve) => {
+    confirmationResolver.current?.(false);
+    confirmationResolver.current = resolve;
+    setConfirmation(request);
+  });
+
+  const resolveConfirmation = (confirmed: boolean) => {
+    confirmationResolver.current?.(confirmed);
+    confirmationResolver.current = null;
+    setConfirmation(null);
+  };
 
   const showError = (message: string) => {
     setToastError(true);
@@ -660,7 +683,7 @@ export function RelayWorkspace() {
     setSelectedRoles((current) => ({ ...current, [blockId]: current[blockId] === blockRoleId ? "" : blockRoleId }));
   };
 
-  const assignBlockRoleToPerson = (blockId: string, personId: string, blockRoleId: string) => {
+  const assignBlockRoleToPerson = async (blockId: string, personId: string, blockRoleId: string) => {
     if (boardLocked) return;
     const existing = activeDay.assignments.find((assignment) => assignment.blockId === blockId && assignment.personId === personId);
     const person = data.people.find((item) => item.id === personId)!;
@@ -672,7 +695,7 @@ export function RelayWorkspace() {
       return;
     }
     const status = person.availability[activeDay.id]?.[blockId] ?? "available";
-    if (status === "unavailable" && !window.confirm(`${person.name} is marked unavailable for this block. Assign them anyway?`)) return;
+    if (status === "unavailable" && !await requestConfirmation({ title: `Assign ${person.name} anyway?`, message: `${person.name} is marked unavailable for this block.`, confirmLabel: "Assign anyway", tone: "warning" })) return;
     const previous = structuredClone(data);
     const next = structuredClone(data);
     const day = next.days.find((item) => item.id === dayId)!;
@@ -761,7 +784,7 @@ export function RelayWorkspace() {
         return;
       }
       const status = person.availability[activeDay.id]?.[blockId] ?? "available";
-      if (status === "unavailable" && !window.confirm(`${person.name} is marked unavailable for this block. Assign them anyway?`)) return;
+      if (status === "unavailable" && !await requestConfirmation({ title: `Assign ${person.name} anyway?`, message: `${person.name} is marked unavailable for this block.`, confirmLabel: "Assign anyway", tone: "warning" })) return;
     }
     const previous = structuredClone(data);
     const next = structuredClone(data);
@@ -801,7 +824,7 @@ export function RelayWorkspace() {
     }
   };
 
-  const moveAssignment = (assignmentId: string, targetBlockId: string, targetPersonId: string) => {
+  const moveAssignment = async (assignmentId: string, targetBlockId: string, targetPersonId: string) => {
     if (boardLocked) return;
     const source = activeDay.assignments.find((item) => item.id === assignmentId);
     const targetPerson = data.people.find((item) => item.id === targetPersonId);
@@ -815,7 +838,7 @@ export function RelayWorkspace() {
       return;
     }
     const status = targetPerson.availability[activeDay.id]?.[targetBlockId] ?? "available";
-    if (status === "unavailable" && !window.confirm(`${targetPerson.name} is marked unavailable for this block. Move the assignment anyway?`)) return;
+    if (status === "unavailable" && !await requestConfirmation({ title: `Move ${targetPerson.name} anyway?`, message: `${targetPerson.name} is marked unavailable for this block.`, confirmLabel: "Move anyway", tone: "warning" })) return;
     const previous = structuredClone(data);
     const next = structuredClone(data);
     const day = next.days.find((item) => item.id === dayId)!;
@@ -872,9 +895,9 @@ export function RelayWorkspace() {
     window.setTimeout(() => setScheduleReviewTarget({ dayId: check.dayId!, blockId: check.blockId!, personId: check.personId!, nonce: Date.now() }), 0);
   };
 
-  const removeBlockRole = (blockId: string, blockRoleId: string) => {
+  const removeBlockRole = async (blockId: string, blockRoleId: string) => {
     const assignedCount = activeDay.assignments.filter((item) => item.blockId === blockId && item.blockRoleId === blockRoleId).length;
-    if (assignedCount && !window.confirm(`Remove this role and unassign ${assignedCount} people from this block?`)) return;
+    if (assignedCount && !await requestConfirmation({ title: "Remove this role?", message: `${assignedCount} ${assignedCount === 1 ? "person is" : "people are"} assigned to it and will be unassigned from this block.`, confirmLabel: "Remove role", tone: "danger" })) return;
     const previous = structuredClone(data);
     const next = structuredClone(data);
     const day = next.days.find((item) => item.id === dayId)!;
@@ -1014,10 +1037,10 @@ export function RelayWorkspace() {
     void save(next, index >= 0 ? `${template.name} updated in the role library.` : `${template.name} added to the role library.`);
   };
 
-  const deleteRoleTemplate = (templateId: string) => {
+  const deleteRoleTemplate = async (templateId: string) => {
     const next = structuredClone(data);
     const template = next.roleLibrary.find((item) => item.id === templateId);
-    if (!template || !window.confirm(`Delete “${template.name}” from the role library? Roles already placed in blocks will stay as editable custom roles.`)) return;
+    if (!template || !await requestConfirmation({ title: `Delete “${template.name}”?`, message: "Roles already placed in blocks will stay as editable custom roles.", confirmLabel: "Delete role", tone: "danger" })) return;
     next.roleLibrary = next.roleLibrary.filter((item) => item.id !== templateId);
     setRoleTemplates((current) => current.filter((item) => item.id !== templateId));
     next.draftChanges += 1;
@@ -1056,7 +1079,7 @@ export function RelayWorkspace() {
       setToast("Availability link copied. Send it to the event roster.");
       window.setTimeout(() => setToast(""), 2400);
     } catch {
-      window.prompt("Copy this availability link", url.toString());
+      setShareLink({ title: "Share availability", message: "Copy this link and send it to the event roster.", url: url.toString() });
     }
   };
 
@@ -1094,7 +1117,7 @@ export function RelayWorkspace() {
       setToast("Prep link copied. Send it to everyone helping before the event.");
       window.setTimeout(() => setToast(""), 2400);
     } catch {
-      window.prompt("Copy this prep link", url.toString());
+      setShareLink({ title: "Share prep", message: "Copy this link and send it to everyone helping before the event.", url: url.toString() });
     }
   };
 
@@ -1179,9 +1202,40 @@ export function RelayWorkspace() {
       ) : (
         <ExecView data={data} person={currentExec} dayId={dayId} setDayId={setDayId} section={execSection} setSection={setExecSection} onAvailability={updateAvailability} onPrepAvailability={updatePrepAvailability} onPersonChange={setExecPersonId} onExit={() => setMode("director")} />
       )}
+      {confirmation ? <ConfirmationDialog request={confirmation} onCancel={() => resolveConfirmation(false)} onConfirm={() => resolveConfirmation(true)} /> : null}
+      {shareLink ? <ShareLinkDialog shareLink={shareLink} onClose={() => setShareLink(null)} onCopied={() => { setShareLink(null); setToast("Link copied."); window.setTimeout(() => setToast(""), 2400); }} /> : null}
       {toast ? <div className={`toast ${toastError ? "error" : ""}`} role={toastError ? "alert" : "status"}><span>{toastError ? "!" : "✓"}</span>{toast}{!toastError && undoState ? <button onClick={() => { const previous = undoState; setUndoState(null); void save(previous, "Change undone."); }}>Undo</button> : null}</div> : null}
     </div>
   );
+}
+
+function ConfirmationDialog({ request, onCancel, onConfirm }: { request: ConfirmationRequest; onCancel: () => void; onConfirm: () => void }) {
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") onCancel(); };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onCancel]);
+  return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}><section className="setup-dialog confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirmation-title" aria-describedby="confirmation-message"><header><div><h2 id="confirmation-title">{request.title}</h2><p id="confirmation-message">{request.message}</p></div><button onClick={onCancel} aria-label="Close">×</button></header><footer><button className="button secondary" onClick={onCancel}>{request.cancelLabel ?? "Cancel"}</button><button className={`button ${request.tone === "danger" ? "danger" : "primary"}`} onClick={onConfirm} autoFocus>{request.confirmLabel}</button></footer></section></div>;
+}
+
+function ShareLinkDialog({ shareLink, onClose, onCopied }: { shareLink: ShareLink; onClose: () => void; onCopied: () => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    inputRef.current?.select();
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(shareLink.url);
+      onCopied();
+    } catch {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
+  };
+  return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog share-link-dialog" role="dialog" aria-modal="true" aria-labelledby="share-link-title"><header><div><span className="kicker">Share link</span><h2 id="share-link-title">{shareLink.title}</h2><p>{shareLink.message}</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="share-link-body"><label>Link<input ref={inputRef} value={shareLink.url} readOnly onFocus={(event) => event.currentTarget.select()} /></label><p>Select the link and copy it manually if your browser blocks the copy button.</p></div><footer><button className="button secondary" onClick={onClose}>Close</button><button className="button primary" onClick={copy}>Copy link</button></footer></section></div>;
 }
 
 function DayToggle({ data, dayId, setDayId }: { data: EventState; dayId: string; setDayId: (id: string) => void }) {
