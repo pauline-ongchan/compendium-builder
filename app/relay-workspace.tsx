@@ -16,15 +16,18 @@ import { getAssignmentAvailabilityChecks, getScheduleChecksViewState, type Sched
 import { getPublicationStatus } from "./publication-status";
 import { validateDayCount } from "./event-setup";
 import { moveRoleOptionIndex, nextRoleColor, roleColor } from "./role-presentation";
+import { isRoleSnapshotCustomized, normalizeRoleName, parseRoleImportCsv, roleImportCsvTemplate, similarRoleTemplates, type RoleImportRow, type SharedRoleTemplate } from "./role-library";
 
 type Section = "schedule" | "prep" | "people" | "roles" | "judging" | "resources";
 type ExecSection = "today" | "schedule" | "prep" | "availability" | "overview" | "directory";
 
 type BlockLink = { id: string; label: string; url: string };
-type RoleTemplate = { id: string; name: string; description: string; color?: string };
+type RoleTemplate = SharedRoleTemplate;
 type BlockRole = {
   id: string;
   templateId: string;
+  templateRevision?: number;
+  customized?: boolean;
   name: string;
   description: string;
   leadPersonId: string;
@@ -336,11 +339,13 @@ function normalizeEvent(raw: EventState): EventState {
   }));
   const groups = raw.groups?.length ? raw.groups : legacyGroups;
   const derivedRoleNames = Array.from(new Set((raw.days ?? []).flatMap((day) => day.blocks.flatMap((block) => blockRoles(block).map((role) => role.name)))));
-  const roleLibrary: RoleTemplate[] = raw.roleLibrary?.length ? raw.roleLibrary.map(({ id, name, description, color }) => ({ id, name, description, color: color || roleColor(name) })) : derivedRoleNames.map((name) => ({
+  const roleLibrary: RoleTemplate[] = raw.roleLibrary?.length ? raw.roleLibrary.map(({ id, name, description, color, normalizedName, revision }) => ({ id, name, description, color: color || roleColor(name), normalizedName: normalizedName || normalizeRoleName(name), revision: revision || 1 })) : derivedRoleNames.map((name) => ({
     id: roleTemplateId(name),
     name,
     description: roleDescriptions[name] ?? `Support the event team as ${name}.`,
     color: roleColor(name),
+    normalizedName: normalizeRoleName(name),
+    revision: 1,
   }));
   const prepSessions = raw.prepSessions ?? [];
   const days = raw.days.map((day) => {
@@ -355,7 +360,9 @@ function normalizeEvent(raw: EventState): EventState {
       requiredRoles: block.requiredRoles ?? [],
       roles: blockRoles(block).map((role) => ({
         id: role.id || `${block.id}-${roleTemplateId(role.name)}`,
-        templateId: role.templateId || roleLibrary.find((template) => template.name.toLowerCase() === role.name.toLowerCase())?.id || roleTemplateId(role.name),
+        templateId: role.templateId !== undefined ? role.templateId : roleLibrary.find((template) => template.name.toLowerCase() === role.name.toLowerCase())?.id || roleTemplateId(role.name),
+        templateRevision: role.templateRevision ?? roleLibrary.find((template) => template.id === role.templateId)?.revision ?? 1,
+        customized: role.customized ?? false,
         name: role.name,
         description: role.description,
         leadPersonId: role.leadPersonId ?? "",
@@ -371,6 +378,8 @@ function normalizeEvent(raw: EventState): EventState {
         role = {
           id: `${block.id}-${roleTemplateId(assignment.role)}`,
           templateId: roleTemplateId(assignment.role),
+          templateRevision: 1,
+          customized: false,
           name: assignment.role,
           description: assignment.description,
           leadPersonId: assignment.leadPersonId ?? "",
@@ -458,7 +467,7 @@ function createBlankEvent(values: { name: string; type: string; venue: string; s
     resources: resourceTemplateItems(),
     prepSessions: [],
     prepTasks: [],
-    roleLibrary: Object.entries(roleDescriptions).map(([name, description]) => ({ id: roleTemplateId(name), name, description, color: roleColor(name) })),
+    roleLibrary: [],
     groups: structuredClone((dataSafePeopleGroups(people))),
     contacts: [],
     judgingRooms: [],
@@ -522,6 +531,7 @@ export function RelayWorkspace() {
   const [showNewEvent, setShowNewEvent] = useState(false);
   const [showEventLibrary, setShowEventLibrary] = useState(false);
   const [showScheduleImport, setShowScheduleImport] = useState(false);
+  const [showRoleImport, setShowRoleImport] = useState(false);
   const [showRoster, setShowRoster] = useState(false);
   const [showEventSettings, setShowEventSettings] = useState(false);
   const [showScheduleChecks, setShowScheduleChecks] = useState(false);
@@ -568,7 +578,11 @@ export function RelayWorkspace() {
           const requestedEventId = new URLSearchParams(window.location.search).get("event");
           const initial = states.find((state: EventState) => state.eventId === requestedEventId) ?? states[0];
           const mergedRoles = new Map<string, RoleTemplate>();
-          for (const role of [...builtInRoleTemplates, ...initial.roleLibrary, ...remoteRoles]) mergedRoles.set(role.id, role);
+          const librarySources = remoteRoles.length ? [...builtInRoleTemplates, ...remoteRoles] : [...builtInRoleTemplates, ...initial.roleLibrary];
+          for (const role of librarySources) {
+            const normalizedName = role.normalizedName || normalizeRoleName(role.name);
+            mergedRoles.set(normalizedName, { ...role, normalizedName, revision: role.revision || 1 });
+          }
           setRoleTemplates(Array.from(mergedRoles.values()).sort((a, b) => a.name.localeCompare(b.name)));
           setEventLibrary(states);
           setData(initial);
@@ -750,7 +764,7 @@ export function RelayWorkspace() {
     void save(next, `${unassigned.length} available people assigned to On Call.`, previous);
   };
 
-  const addScheduleRoleToBlock = async (blockId: string, template: RoleTemplate, personId?: string) => {
+  const addScheduleRoleToBlock = async (blockId: string, template: RoleTemplate, personId?: string, linkedToLibrary = true) => {
     if (personId) {
       const person = data.people.find((item) => item.id === personId)!;
       const conflict = findAssignmentConflict(activeDay, personId, blockId);
@@ -767,16 +781,15 @@ export function RelayWorkspace() {
     const next = structuredClone(data);
     const day = next.days.find((item) => item.id === dayId)!;
     const block = day.blocks.find((item) => item.id === blockId)!;
-    const existing = blockRoles(block).find((role) => role.templateId === template.id);
+    const existing = blockRoles(block).find((role) => (linkedToLibrary && role.templateId === template.id) || normalizeRoleName(role.name) === normalizeRoleName(template.name));
     if (existing) {
       if (personId) assignBlockRoleToPerson(blockId, personId, existing.id);
       else setSelectedRoles((current) => ({ ...current, [blockId]: existing.id }));
       return;
     }
-    const role: BlockRole = { id: `${blockId}-${template.id}-${Date.now()}`, templateId: template.id, name: template.name, description: template.description || `Support ${block.label}.`, leadPersonId: "", color: template.color || roleColor(template.name) };
+    const role: BlockRole = { id: `${blockId}-${template.id || roleTemplateId(template.name)}-${Date.now()}`, templateId: linkedToLibrary ? template.id : "", templateRevision: linkedToLibrary ? template.revision || 1 : undefined, customized: false, name: template.name, description: template.description || `Support ${block.label}.`, leadPersonId: "", color: template.color || roleColor(template.name) };
     block.roles = [...blockRoles(block), role];
     block.requiredRoles = block.roles.map((item) => item.name);
-    if (!next.roleLibrary.some((item) => item.id === template.id)) next.roleLibrary.push(template);
     if (personId) {
       const person = next.people.find((item) => item.id === personId)!;
       day.assignments.push({ id: `${blockId}-${personId}-${Date.now()}`, personId, blockId, blockRoleId: role.id, role: role.name, lead: "", leadPersonId: "", description: role.description, color: blockRoleColor(role), customized: false });
@@ -789,13 +802,19 @@ export function RelayWorkspace() {
     void save(next, `${template.name} added to ${block.label}.`, previous);
   };
 
-  const createAndAddRole = async (blockId: string, name: string, color: string, personId?: string) => {
-    const template: RoleTemplate = { id: `${roleTemplateId(name)}-${Date.now()}`, name: name.trim(), description: "", color };
+  const createAndAddRole = async (blockId: string, name: string, color: string, saveToLibrary: boolean, personId?: string) => {
+    const template: RoleTemplate = { id: `${roleTemplateId(name)}-${Date.now()}`, name: name.trim(), description: "", color, normalizedName: normalizeRoleName(name), revision: 1 };
+    if (!saveToLibrary) {
+      await addScheduleRoleToBlock(blockId, template, personId, false);
+      return;
+    }
     try {
       const response = await fetch("/api/role-library", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(template) });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      setRoleTemplates((current) => [...current, template]);
-      await addScheduleRoleToBlock(blockId, template, personId);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? `HTTP ${response.status}`);
+      const saved = payload.role as RoleTemplate;
+      setRoleTemplates((current) => [...current.filter((role) => role.id !== saved.id), saved].sort((a, b) => a.name.localeCompare(b.name)));
+      await addScheduleRoleToBlock(blockId, saved, personId, true);
     } catch (error) {
       showError(`Role could not be created: ${error instanceof Error ? error.message : "Unable to update the role library."}`);
     }
@@ -835,7 +854,7 @@ export function RelayWorkspace() {
     void save(next, `${source.role} moved to ${targetPerson.name}${targetExisting ? `, replacing ${targetExisting.role}` : ""}.`, previous);
   };
 
-  const saveRoleEdit = (values: { name: string; description: string; leadPersonId: string; color: string; scope: "individual" | "block" | "event" }) => {
+  const saveRoleEdit = (values: { name: string; description: string; leadPersonId: string; color: string; scope: "individual" | "block" | "event"; resetToLibrary?: boolean }) => {
     if (!roleEditor) return;
     const currentBlock = activeDay.blocks.find((block) => block.id === roleEditor.blockId)!;
     const currentRole = blockRoles(currentBlock).find((role) => role.id === roleEditor.blockRoleId)!;
@@ -847,12 +866,14 @@ export function RelayWorkspace() {
     } else {
       for (const day of next.days) {
         for (const block of day.blocks) {
-          const role = blockRoles(block).find((item) => item.id === currentRole.id || (values.scope === "event" && item.templateId === currentRole.templateId));
+          const role = blockRoles(block).find((item) => item.id === currentRole.id || (values.scope === "event" && Boolean(currentRole.templateId) && item.templateId === currentRole.templateId));
           if (!role) continue;
-          Object.assign(role, { name: values.name, description: values.description, leadPersonId: values.leadPersonId, color: values.color });
+          const sourceTemplate = roleTemplates.find((template) => template.id === role.templateId);
+          const customized = !values.resetToLibrary && isRoleSnapshotCustomized({ name: values.name, description: values.description, color: values.color }, sourceTemplate && { ...sourceTemplate, color: sourceTemplate.color || roleColor(sourceTemplate.name) });
+          Object.assign(role, { name: values.name, description: values.description, leadPersonId: values.leadPersonId, color: values.color, customized, templateRevision: values.resetToLibrary ? sourceTemplate?.revision || role.templateRevision : role.templateRevision });
           block.requiredRoles = blockRoles(block).map((item) => item.name);
-          for (const assignment of day.assignments.filter((item) => item.blockRoleId === role.id && !item.customized)) {
-            Object.assign(assignment, { role: values.name, description: values.description, leadPersonId: values.leadPersonId, lead: next.people.find((person) => person.id === values.leadPersonId)?.name ?? "", color: values.color });
+          for (const assignment of day.assignments.filter((item) => item.blockRoleId === role.id)) {
+            Object.assign(assignment, { role: values.name, description: values.description, leadPersonId: values.leadPersonId, lead: next.people.find((person) => person.id === values.leadPersonId)?.name ?? "", color: values.color, customized: false });
           }
         }
       }
@@ -999,26 +1020,37 @@ export function RelayWorkspace() {
     void save(next, `${person.name}’s preferences and private notes updated.`);
   };
 
-  const saveRoleTemplate = (template: RoleTemplate) => {
-    const next = structuredClone(data);
-    const index = next.roleLibrary.findIndex((item) => item.id === template.id);
-    if (index >= 0) next.roleLibrary[index] = template;
-    else next.roleLibrary.push(template);
-    next.roleLibrary.sort((a, b) => a.name.localeCompare(b.name));
-    setRoleTemplates((current) => current.some((item) => item.id === template.id) ? current.map((item) => item.id === template.id ? template : item) : [...current, template].sort((a, b) => a.name.localeCompare(b.name)));
-    next.draftChanges += 1;
-    setRoleTemplateEditor(null);
-    void fetch("/api/role-library", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(template) }).then((response) => {
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    }).catch((error) => showError(`Role library update failed: ${error instanceof Error ? error.message : "Unable to save this role."}`));
-    void save(next, index >= 0 ? `${template.name} updated in the role library.` : `${template.name} added to the role library.`);
+  const persistRoleTemplate = async (template: RoleTemplate, replaceExisting = false) => {
+    const response = await fetch("/api/role-library", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...template, replaceExisting }) });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(payload.error ?? `HTTP ${response.status}`) as Error & { existing?: RoleTemplate };
+      error.existing = payload.existing;
+      throw error;
+    }
+    return payload.role as RoleTemplate;
+  };
+
+  const saveRoleTemplate = async (template: RoleTemplate) => {
+    try {
+      const duplicate = roleTemplates.find((item) => item.id !== template.id && (item.normalizedName || normalizeRoleName(item.name)) === normalizeRoleName(template.name));
+      if (duplicate) throw new Error(`A master role named ${duplicate.name} already exists. Edit or merge that role instead.`);
+      const saved = await persistRoleTemplate(template);
+      const existed = roleTemplates.some((item) => item.id === saved.id);
+      setRoleTemplates((current) => [...current.filter((item) => item.id !== saved.id), saved].sort((a, b) => a.name.localeCompare(b.name)));
+      setRoleTemplateEditor(null);
+      setToast(existed ? `${saved.name} updated in the master library.` : `${saved.name} added to the master library.`);
+      window.setTimeout(() => setToast(""), 2600);
+    } catch (error) {
+      showError(`Role library update failed: ${error instanceof Error ? error.message : "Unable to save this role."}`);
+    }
   };
 
   const deleteRoleTemplate = (templateId: string) => {
-    const next = structuredClone(data);
-    const template = next.roleLibrary.find((item) => item.id === templateId);
+    const template = roleTemplates.find((item) => item.id === templateId);
     if (!template || !window.confirm(`Delete “${template.name}” from the role library? Roles already placed in blocks will stay as editable custom roles.`)) return;
-    next.roleLibrary = next.roleLibrary.filter((item) => item.id !== templateId);
+    const next = structuredClone(data);
+    for (const day of next.days) for (const block of day.blocks) for (const role of blockRoles(block)) if (role.templateId === templateId) Object.assign(role, { templateId: "", templateRevision: undefined, customized: false });
     setRoleTemplates((current) => current.filter((item) => item.id !== templateId));
     next.draftChanges += 1;
     setRoleTemplateEditor(null);
@@ -1030,7 +1062,7 @@ export function RelayWorkspace() {
 
   const addLibraryRoleToBlock = (templateId: string, blockId: string) => {
     const next = structuredClone(data);
-    const template = next.roleLibrary.find((item) => item.id === templateId);
+    const template = roleTemplates.find((item) => item.id === templateId);
     const day = next.days.find((item) => item.id === dayId);
     const block = day?.blocks.find((item) => item.id === blockId);
     if (!template || !block) return;
@@ -1040,10 +1072,103 @@ export function RelayWorkspace() {
       window.setTimeout(() => setToast(""), 2400);
       return;
     }
-    block.roles = [...roles, { ...structuredClone(template), id: `${block.id}-role-${Date.now()}`, templateId, leadPersonId: "" }];
+    block.roles = [...roles, { id: `${block.id}-role-${Date.now()}`, templateId, templateRevision: template.revision || 1, customized: false, name: template.name, description: template.description, color: template.color, leadPersonId: "" }];
     block.requiredRoles = block.roles.map((role) => role.name);
     next.draftChanges += 1;
     void save(next, `${template.name} added to ${block.label}. Edit the block to tailor its instructions.`);
+  };
+
+  const importRoleTemplates = async (rows: RoleImportRow[]) => {
+    const validRows = rows.filter((row) => !row.error);
+    let current = [...roleTemplates];
+    let created = 0;
+    let updated = 0;
+    let failed = 0;
+    for (const row of validRows) {
+      const existing = current.find((role) => (role.normalizedName || normalizeRoleName(role.name)) === normalizeRoleName(row.name));
+      const template: RoleTemplate = { id: existing?.id ?? `${roleTemplateId(row.name)}-${Date.now()}-${row.row}`, name: row.name, description: row.description, color: row.color || existing?.color || nextRoleColor(current.map((role) => role.color)), normalizedName: normalizeRoleName(row.name), revision: existing?.revision || 1 };
+      try {
+        const saved = await persistRoleTemplate(template);
+        current = [...current.filter((role) => role.id !== saved.id), saved];
+        if (existing) updated += 1;
+        else created += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    setRoleTemplates(current.sort((a, b) => a.name.localeCompare(b.name)));
+    setShowRoleImport(false);
+    setToast(`${created} created · ${updated} updated${failed ? ` · ${failed} failed` : ""}`);
+    setToastError(Boolean(failed));
+    window.setTimeout(() => { setToast(""); setToastError(false); }, 3600);
+  };
+
+  const mergeRoleTemplates = async (sourceId: string, targetId: string) => {
+    const source = roleTemplates.find((role) => role.id === sourceId);
+    const target = roleTemplates.find((role) => role.id === targetId);
+    if (!source || !target || !window.confirm(`Merge “${source.name}” into “${target.name}”? Event-specific role details and assignments will stay unchanged.`)) return;
+    try {
+      const response = await fetch("/api/role-library", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "merge", sourceId, targetId }) });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? `HTTP ${response.status}`);
+      const relinkEvent = (event: EventState) => {
+        const nextEvent = structuredClone(event);
+        for (const day of nextEvent.days) for (const block of day.blocks) for (const role of blockRoles(block)) if (role.templateId === sourceId) Object.assign(role, { templateId: targetId, templateRevision: target.revision || 1, customized: isRoleSnapshotCustomized({ name: role.name, description: role.description, color: blockRoleColor(role) }, { ...target, color: target.color || roleColor(target.name) }) });
+        return nextEvent;
+      };
+      const next = relinkEvent(data);
+      setData(next);
+      setEventLibrary((events) => events.map((event) => event.eventId === next.eventId ? next : relinkEvent(event)));
+      setRoleTemplates((current) => current.filter((role) => role.id !== sourceId));
+      setRoleTemplateEditor(null);
+      setToast(`${source.name} merged into ${target.name}. ${payload.updatedEvents ?? 0} event${payload.updatedEvents === 1 ? "" : "s"} relinked.`);
+      window.setTimeout(() => setToast(""), 3200);
+    } catch (error) {
+      showError(`Roles could not be merged: ${error instanceof Error ? error.message : "Unable to merge these roles."}`);
+    }
+  };
+
+  const replaceMasterFromRole = async (blockId: string, blockRoleId: string) => {
+    const block = activeDay.blocks.find((item) => item.id === blockId);
+    const role = block && blockRoles(block).find((item) => item.id === blockRoleId);
+    if (!role?.templateId || !window.confirm(`Replace the master “${role.name}” template with this event version? Other event copies will stay unchanged.`)) return;
+    try {
+      const saved = await persistRoleTemplate({ id: role.templateId, name: role.name, description: role.description, color: blockRoleColor(role), normalizedName: normalizeRoleName(role.name), revision: role.templateRevision });
+      setRoleTemplates((current) => [...current.filter((item) => item.id !== saved.id), saved].sort((a, b) => a.name.localeCompare(b.name)));
+      const next = structuredClone(data);
+      const current = next.days.flatMap((day) => day.blocks).flatMap((item) => blockRoles(item)).find((item) => item.id === blockRoleId);
+      if (current) Object.assign(current, { templateRevision: saved.revision, customized: false });
+      next.draftChanges += 1;
+      setRoleEditor(null);
+      void save(next, `${saved.name} replaced in the master library.`);
+    } catch (error) {
+      showError(`Master role could not be replaced: ${error instanceof Error ? error.message : "Unable to replace this template."}`);
+    }
+  };
+
+  const promoteRoleToLibrary = async (blockId: string, blockRoleId: string) => {
+    const block = activeDay.blocks.find((item) => item.id === blockId);
+    const role = block && blockRoles(block).find((item) => item.id === blockRoleId);
+    if (!role) return;
+    try {
+      let saved: RoleTemplate;
+      try {
+        saved = await persistRoleTemplate({ id: `${roleTemplateId(role.name)}-${Date.now()}`, name: role.name, description: role.description, color: blockRoleColor(role) });
+      } catch (error) {
+        const existing = (error as Error & { existing?: RoleTemplate }).existing;
+        if (!existing || !window.confirm(`A master role named “${existing.name}” already exists. Replace it with this event version?`)) throw error;
+        saved = await persistRoleTemplate({ ...existing, name: role.name, description: role.description, color: blockRoleColor(role) }, true);
+      }
+      setRoleTemplates((current) => [...current.filter((item) => item.id !== saved.id), saved].sort((a, b) => a.name.localeCompare(b.name)));
+      const next = structuredClone(data);
+      const current = next.days.flatMap((day) => day.blocks).flatMap((item) => blockRoles(item)).find((item) => item.id === blockRoleId);
+      if (current) Object.assign(current, { templateId: saved.id, templateRevision: saved.revision, customized: false });
+      next.draftChanges += 1;
+      setRoleEditor(null);
+      void save(next, `${saved.name} added to the master library.`);
+    } catch (error) {
+      showError(`Role could not be added to the library: ${error instanceof Error ? error.message : "Unable to save this role."}`);
+    }
   };
 
   const shareAvailability = async () => {
@@ -1160,18 +1285,19 @@ export function RelayWorkspace() {
             {section === "schedule" && <ScheduleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} warnings={warnings} reviewTarget={scheduleReviewTarget} selectedRoles={selectedRoles} boardLocked={boardLocked} roleTemplates={roleTemplates} onToggleLock={toggleBoardLock} onSelectRole={toggleSelectedRole} onCell={changeAssignment} onAssignRole={assignBlockRoleToPerson} onClearAssignment={clearAssignment} onMoveAssignment={moveAssignment} onAddRole={addScheduleRoleToBlock} onCreateRole={createAndAddRole} onEditRole={(blockId, blockRoleId) => setRoleEditor({ blockId, blockRoleId })} onRemoveRole={removeBlockRole} onAssignRest={assignRestToOnCall} onAddBlock={() => setBlockEditor({})} onImport={() => setShowScheduleImport(true)} onEditBlock={(blockId) => setBlockEditor({ blockId })} onDuplicateBlock={duplicateBlock} onDeleteBlock={setDeleteBlockId} onReview={reviewScheduleCheck} onViewAll={() => setShowScheduleChecks(true)} />}
             {section === "prep" && <PrepView data={data} onSave={savePrep} onShare={sharePrep} />}
             {section === "people" && <PeopleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} onManageRoster={() => setShowRoster(true)} onShareAvailability={shareAvailability} onEditProfile={setProfilePersonId} />}
-            {section === "roles" && <RolesView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} onOpen={(assignment) => setRoleEditor({ blockId: assignment.blockId, blockRoleId: assignment.blockRoleId, assignmentId: assignment.id })} onEditBlock={(blockId) => setBlockEditor({ blockId })} onDuplicateBlock={duplicateBlock} onAddRoleToBlock={addLibraryRoleToBlock} onCreateRole={() => setRoleTemplateEditor({})} onEditRole={(templateId) => setRoleTemplateEditor({ templateId })} />}
+            {section === "roles" && <RolesView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} roleTemplates={roleTemplates} onOpen={(blockId, blockRoleId) => setRoleEditor({ blockId, blockRoleId })} onEditBlock={(blockId) => setBlockEditor({ blockId })} onAddRoleToBlock={addLibraryRoleToBlock} onCreateRole={() => setRoleTemplateEditor({})} onEditRole={(templateId) => setRoleTemplateEditor({ templateId })} onImport={() => setShowRoleImport(true)} />}
             {section === "judging" && <JudgingView data={data} onCycle={cycleJudgingStatus} />}
             {section === "resources" && <ResourcesView data={data} onSave={saveOverview} />}
           </main>
-          {roleEditor && <RoleEditor data={data} day={activeDay} editor={roleEditor} onClose={() => setRoleEditor(null)} onSave={saveRoleEdit} onRemove={removeRoleFromBlock} />}
+          {roleEditor && <RoleEditor data={data} day={activeDay} editor={roleEditor} roleTemplates={roleTemplates} onClose={() => setRoleEditor(null)} onSave={saveRoleEdit} onRemove={removeRoleFromBlock} onReplaceMaster={() => void replaceMasterFromRole(roleEditor.blockId, roleEditor.blockRoleId)} onPromote={() => void promoteRoleToLibrary(roleEditor.blockId, roleEditor.blockRoleId)} />}
           {blockEditor && <BlockEditor day={activeDay} blockId={blockEditor.blockId} onClose={() => setBlockEditor(null)} onSave={saveBlock} />}
           {showNewEvent && <NewEventDialog onClose={() => setShowNewEvent(false)} onCreate={startNewEvent} />}
           {showEventLibrary && <EventLibraryDialog events={eventLibrary} currentId={data.eventId} onClose={() => setShowEventLibrary(false)} onSwitch={switchEvent} onNew={() => { setShowEventLibrary(false); setShowNewEvent(true); }} />}
           {showScheduleImport && <ScheduleImportDialog day={activeDay} onClose={() => setShowScheduleImport(false)} onImport={importSchedule} />}
+          {showRoleImport && <RoleImportDialog roleTemplates={roleTemplates} onClose={() => setShowRoleImport(false)} onImport={importRoleTemplates} />}
           {showRoster && <RosterDialog data={data} onClose={() => setShowRoster(false)} onSave={saveRoster} />}
           {profilePersonId && <ProfileDialog person={data.people.find((person) => person.id === profilePersonId)!} onClose={() => setProfilePersonId(null)} onSave={saveProfile} />}
-          {roleTemplateEditor && <RoleTemplateDialog roleLibrary={data.roleLibrary} templateId={roleTemplateEditor.templateId} onClose={() => setRoleTemplateEditor(null)} onSave={saveRoleTemplate} onDelete={deleteRoleTemplate} />}
+          {roleTemplateEditor && <RoleTemplateDialog roleLibrary={roleTemplates} templateId={roleTemplateEditor.templateId} onClose={() => setRoleTemplateEditor(null)} onSave={saveRoleTemplate} onDelete={deleteRoleTemplate} onMerge={mergeRoleTemplates} />}
           {showEventSettings && <EventSettingsDialog data={data} onClose={() => setShowEventSettings(false)} onSave={saveEventSettings} />}
           {showScheduleChecks && <ScheduleChecksDialog checks={warnings} loading={!hydrated} error={loadError} onReview={reviewScheduleCheck} onClose={() => setShowScheduleChecks(false)} />}
           {deleteBlockId && activeDay.blocks.some((block) => block.id === deleteBlockId) ? <DeleteBlockDialog block={activeDay.blocks.find((block) => block.id === deleteBlockId)!} assignmentCount={activeDay.assignments.filter((assignment) => assignment.blockId === deleteBlockId).length} onClose={() => setDeleteBlockId(null)} onConfirm={() => deleteBlock(deleteBlockId)} /> : null}
@@ -1188,7 +1314,7 @@ function DayToggle({ data, dayId, setDayId }: { data: EventState; dayId: string;
   return <div className="day-toggle" aria-label="Event day">{data.days.map((day) => <button key={day.id} className={dayId === day.id ? "active" : ""} onClick={() => setDayId(day.id)}>{day.label}<small>{day.date.replace(/^[A-Za-z]+, /, "")}</small></button>)}</div>;
 }
 
-function ScheduleView({ data, activeDay, dayId, setDayId, warnings, reviewTarget, selectedRoles, boardLocked, roleTemplates, onToggleLock, onSelectRole, onCell, onAssignRole, onClearAssignment, onMoveAssignment, onAddRole, onCreateRole, onEditRole, onRemoveRole, onAssignRest, onAddBlock, onImport, onEditBlock, onDuplicateBlock, onDeleteBlock, onReview, onViewAll }: { data: EventState; activeDay: EventDay; dayId: string; setDayId: (id: string) => void; warnings: ScheduleCheck[]; reviewTarget: { dayId: string; blockId: string; personId: string; nonce: number } | null; selectedRoles: Record<string, string>; boardLocked: boolean; roleTemplates: RoleTemplate[]; onToggleLock: () => void; onSelectRole: (blockId: string, blockRoleId: string) => void; onCell: (blockId: string, personId: string) => void; onAssignRole: (blockId: string, personId: string, blockRoleId: string) => void; onClearAssignment: (assignmentId: string) => void; onMoveAssignment: (assignmentId: string, targetBlockId: string, targetPersonId: string) => void; onAddRole: (blockId: string, template: RoleTemplate, personId?: string) => void; onCreateRole: (blockId: string, name: string, color: string, personId?: string) => void; onEditRole: (blockId: string, blockRoleId: string) => void; onRemoveRole: (blockId: string, blockRoleId: string) => void; onAssignRest: (blockId: string, blockRoleId: string) => void; onAddBlock: () => void; onImport: () => void; onEditBlock: (blockId: string) => void; onDuplicateBlock: (blockId: string) => void; onDeleteBlock: (blockId: string) => void; onReview: (check: ScheduleCheck) => void; onViewAll: () => void }) {
+function ScheduleView({ data, activeDay, dayId, setDayId, warnings, reviewTarget, selectedRoles, boardLocked, roleTemplates, onToggleLock, onSelectRole, onCell, onAssignRole, onClearAssignment, onMoveAssignment, onAddRole, onCreateRole, onEditRole, onRemoveRole, onAssignRest, onAddBlock, onImport, onEditBlock, onDuplicateBlock, onDeleteBlock, onReview, onViewAll }: { data: EventState; activeDay: EventDay; dayId: string; setDayId: (id: string) => void; warnings: ScheduleCheck[]; reviewTarget: { dayId: string; blockId: string; personId: string; nonce: number } | null; selectedRoles: Record<string, string>; boardLocked: boolean; roleTemplates: RoleTemplate[]; onToggleLock: () => void; onSelectRole: (blockId: string, blockRoleId: string) => void; onCell: (blockId: string, personId: string) => void; onAssignRole: (blockId: string, personId: string, blockRoleId: string) => void; onClearAssignment: (assignmentId: string) => void; onMoveAssignment: (assignmentId: string, targetBlockId: string, targetPersonId: string) => void; onAddRole: (blockId: string, template: RoleTemplate, personId?: string) => void; onCreateRole: (blockId: string, name: string, color: string, saveToLibrary: boolean, personId?: string) => void; onEditRole: (blockId: string, blockRoleId: string) => void; onRemoveRole: (blockId: string, blockRoleId: string) => void; onAssignRest: (blockId: string, blockRoleId: string) => void; onAddBlock: () => void; onImport: () => void; onEditBlock: (blockId: string) => void; onDuplicateBlock: (blockId: string) => void; onDeleteBlock: (blockId: string) => void; onReview: (check: ScheduleCheck) => void; onViewAll: () => void }) {
   const [boardFocused, setBoardFocused] = useState(false);
   const [rolePicker, setRolePicker] = useState<{ blockId: string; personId: string; anchor: { left: number; top: number; bottom: number; width: number } } | null>(null);
   const [dragTarget, setDragTarget] = useState<{ blockId: string; personId: string } | null>(null);
@@ -1297,7 +1423,7 @@ function ScheduleView({ data, activeDay, dayId, setDayId, warnings, reviewTarget
                   {assignment ? <span className="role-chip" style={{ background: assignment.color || roleColor(assignment.role) }}><span><b>{assignment.role}</b>{lead ? <small>Lead: {lead}</small> : null}</span>{teammatePeople.length ? <span className="cell-teammates" aria-label={`Also assigned: ${teammates.join(", ")}`}>{teammatePeople.slice(0, 3).map((teammate) => <PersonAvatar person={teammate} small key={teammate.id} />)}{teammatePeople.length > 3 ? <b>+{teammatePeople.length - 3}</b> : null}</span> : null}<i aria-hidden="true">⋮⋮</i></span> : <span className="add-role" aria-hidden="true">+</span>}
                 </button>
                 {assignment && !boardLocked ? <button className="assignment-clear" onClick={() => onClearAssignment(assignment.id)} aria-label={`Clear ${assignment.role} from ${person.name}`} title="Clear assignment">×</button> : null}
-                {pickerOpen && !boardLocked ? <RoleSearchPicker anchor={rolePicker.anchor} block={block} title={assignment ? `Change ${person.name}’s role` : `Assign ${person.name}`} people={data.people} assignments={activeDay.assignments} currentRoleId={assignment?.blockRoleId} roleTemplates={roleTemplates} onChooseRole={(blockRoleId) => { onAssignRole(block.id, person.id, blockRoleId); setRolePicker(null); }} onClear={assignment ? () => { onClearAssignment(assignment.id); setRolePicker(null); } : undefined} onAdd={(template) => { onAddRole(block.id, template, person.id); setRolePicker(null); }} onCreate={(name, color) => { onCreateRole(block.id, name, color, person.id); setRolePicker(null); }} onClose={() => setRolePicker(null)} /> : null}
+                {pickerOpen && !boardLocked ? <RoleSearchPicker anchor={rolePicker.anchor} block={block} title={assignment ? `Change ${person.name}’s role` : `Assign ${person.name}`} people={data.people} assignments={activeDay.assignments} currentRoleId={assignment?.blockRoleId} roleTemplates={roleTemplates} onChooseRole={(blockRoleId) => { onAssignRole(block.id, person.id, blockRoleId); setRolePicker(null); }} onClear={assignment ? () => { onClearAssignment(assignment.id); setRolePicker(null); } : undefined} onAdd={(template) => { onAddRole(block.id, template, person.id); setRolePicker(null); }} onCreate={(name, color, saveToLibrary) => { onCreateRole(block.id, name, color, saveToLibrary, person.id); setRolePicker(null); }} onClose={() => setRolePicker(null)} /> : null}
               </div>;
             })}
           </div>)}
@@ -1308,7 +1434,7 @@ function ScheduleView({ data, activeDay, dayId, setDayId, warnings, reviewTarget
   </div>;
 }
 
-function RoleSearchPicker({ anchor, block, title, people, assignments, currentRoleId, roleTemplates, onChooseRole, onClear, onAdd, onCreate, onClose }: { anchor: { left: number; top: number; bottom: number; width: number }; block: EventBlock; title: string; people: Person[]; assignments: Assignment[]; currentRoleId?: string; roleTemplates: RoleTemplate[]; onChooseRole: (blockRoleId: string) => void; onClear?: () => void; onAdd: (template: RoleTemplate) => void; onCreate: (name: string, color: string) => void; onClose: () => void }) {
+function RoleSearchPicker({ anchor, block, title, people, assignments, currentRoleId, roleTemplates, onChooseRole, onClear, onAdd, onCreate, onClose }: { anchor: { left: number; top: number; bottom: number; width: number }; block: EventBlock; title: string; people: Person[]; assignments: Assignment[]; currentRoleId?: string; roleTemplates: RoleTemplate[]; onChooseRole: (blockRoleId: string) => void; onClear?: () => void; onAdd: (template: RoleTemplate) => void; onCreate: (name: string, color: string, saveToLibrary: boolean) => void; onClose: () => void }) {
   const [search, setSearch] = useState("");
   const [newRoleColor, setNewRoleColor] = useState(() => nextRoleColor([...roleTemplates.map((role) => role.color), ...blockRoles(block).map((role) => role.color)]));
   const [highlightedIndex, setHighlightedIndex] = useState(0);
@@ -1320,9 +1446,9 @@ function RoleSearchPicker({ anchor, block, title, people, assignments, currentRo
   const roles = blockRoles(block);
   const normalizedSearch = search.trim().toLowerCase();
   const existingOptions = roles.filter((role) => `${role.name} ${role.description}`.toLowerCase().includes(normalizedSearch)).map((role) => ({ kind: "role" as const, id: role.id, name: role.name, description: role.description, role }));
-  const libraryOptions = roleTemplates.filter((template) => !roles.some((role) => role.templateId === template.id || role.name.toLowerCase() === template.name.toLowerCase()) && `${template.name} ${template.description}`.toLowerCase().includes(normalizedSearch)).map((template) => ({ kind: "template" as const, id: template.id, name: template.name, description: template.description, template }));
+  const libraryOptions = roleTemplates.filter((template) => !roles.some((role) => role.templateId === template.id || normalizeRoleName(role.name) === normalizeRoleName(template.name)) && `${template.name} ${template.description}`.toLowerCase().includes(normalizedSearch)).map((template) => ({ kind: "template" as const, id: template.id, name: template.name, description: template.description, template }));
   const options = [...existingOptions, ...libraryOptions].slice(0, 12);
-  const exactMatch = [...roles, ...roleTemplates].some((role) => role.name.toLowerCase() === normalizedSearch);
+  const exactMatch = [...roles, ...roleTemplates].some((role) => normalizeRoleName(role.name) === normalizeRoleName(normalizedSearch));
   const canCreate = Boolean(normalizedSearch) && !exactMatch;
   const optionCount = options.length + (canCreate ? 1 : 0);
   useLayoutEffect(() => {
@@ -1348,7 +1474,7 @@ function RoleSearchPicker({ anchor, block, title, people, assignments, currentRo
     if (option?.kind === "role") {
       if (option.id !== currentRoleId) onChooseRole(option.id);
     } else if (option?.kind === "template") onAdd(option.template);
-    else if (canCreate && index === options.length) onCreate(search.trim(), newRoleColor);
+    else if (canCreate && index === options.length) onCreate(search.trim(), newRoleColor, false);
   };
   const picker = <div className="assignment-role-picker" ref={pickerRef} role="dialog" aria-label={`${title} in ${block.label}`} style={{ left: position.left, top: position.top, maxHeight: position.maxHeight, visibility: position.visible ? "visible" : "hidden" }}>
     <div className="assignment-role-picker-head"><div><strong>{title}</strong><small>{block.label}</small></div><button onClick={onClose} aria-label="Close role picker">×</button></div>
@@ -1361,7 +1487,7 @@ function RoleSearchPicker({ anchor, block, title, people, assignments, currentRo
       const roleMembers = option.kind === "role" ? assignments.filter((assignment) => assignment.blockId === block.id && assignment.blockRoleId === option.id).map((assignment) => people.find((candidate) => candidate.id === assignment.personId)).filter((candidate): candidate is Person => Boolean(candidate)) : [];
       const isCurrent = option.kind === "role" && currentRoleId === option.id;
       return <button id={`${listboxId}-option-${index}`} role="option" aria-selected={highlightedIndex === index} aria-disabled={isCurrent} data-current={isCurrent} data-highlighted={highlightedIndex === index} key={`${option.kind}-${option.id}`} onMouseEnter={() => setHighlightedIndex(index)} onClick={() => chooseOption(index)}><i style={{ background: option.kind === "role" ? blockRoleColor(option.role) : option.template.color || roleColor(option.name) }} /><span><strong>{option.name}</strong><small>{option.kind === "role" ? `${roleMembers.length} assigned · Already in this block` : option.description || "Add to this block"}</small></span>{option.kind === "role" ? <span className="picker-member-stack">{roleMembers.slice(0, 3).map((member) => <PersonAvatar person={member} small key={member.id} />)}{roleMembers.length > 3 ? <b>+{roleMembers.length - 3}</b> : null}</span> : null}<b>{isCurrent ? "Current" : option.kind === "role" ? "Assign" : "Add"}</b></button>;
-    })}{canCreate ? <div className="create-role-option" id={`${listboxId}-option-${options.length}`} role="option" aria-selected={highlightedIndex === options.length} data-highlighted={highlightedIndex === options.length} onMouseEnter={() => setHighlightedIndex(options.length)}><input type="color" value={newRoleColor} onChange={(event) => setNewRoleColor(event.target.value)} aria-label="New role color" /><button onClick={() => chooseOption(options.length)}><span><strong>Create “{search.trim()}”</strong><small>Add this color and role to the shared library</small></span><b>↵</b></button></div> : null}{!options.length && !canCreate ? <p>No matching roles.</p> : null}</div>
+    })}{canCreate ? <div className="create-role-option" id={`${listboxId}-option-${options.length}`} role="option" aria-selected={highlightedIndex === options.length} data-highlighted={highlightedIndex === options.length} onMouseEnter={() => setHighlightedIndex(options.length)}><input type="color" value={newRoleColor} onChange={(event) => setNewRoleColor(event.target.value)} aria-label="New role color" /><div><strong>Create “{search.trim()}”</strong><span><button onClick={() => onCreate(search.trim(), newRoleColor, false)}>Add to this event</button><button onClick={() => onCreate(search.trim(), newRoleColor, true)}>Add to event + library</button></span></div></div> : null}{!options.length && !canCreate ? <p>No matching roles.</p> : null}</div>
     <div className="assignment-role-picker-actions"><span>↑↓ choose · Enter assign · Esc close</span>{onClear ? <button className="danger" onClick={onClear}>Remove assignment</button> : null}</div>
   </div>;
   return createPortal(picker, document.body);
@@ -1415,7 +1541,7 @@ function PeopleView({ data, activeDay, dayId, setDayId, onManageRoster, onShareA
   </div>;
 }
 
-function BlockAssignmentHeader({ block, day, people, selectedRoleId, locked, roleTemplates, onSelectRole, onAddRole, onCreateRole, onEditRole, onRemoveRole, onAssignRest, onEditBlock, onDuplicateBlock, onDeleteBlock }: { block: EventBlock; day: EventDay; people: Person[]; selectedRoleId: string; locked: boolean; roleTemplates: RoleTemplate[]; onSelectRole: (blockId: string, blockRoleId: string) => void; onAddRole: (blockId: string, template: RoleTemplate) => void; onCreateRole: (blockId: string, name: string, color: string) => void; onEditRole: (blockId: string, blockRoleId: string) => void; onRemoveRole: (blockId: string, blockRoleId: string) => void; onAssignRest: (blockId: string, blockRoleId: string) => void; onEditBlock: (blockId: string) => void; onDuplicateBlock: (blockId: string) => void; onDeleteBlock: (blockId: string) => void }) {
+function BlockAssignmentHeader({ block, day, people, selectedRoleId, locked, roleTemplates, onSelectRole, onAddRole, onCreateRole, onEditRole, onRemoveRole, onAssignRest, onEditBlock, onDuplicateBlock, onDeleteBlock }: { block: EventBlock; day: EventDay; people: Person[]; selectedRoleId: string; locked: boolean; roleTemplates: RoleTemplate[]; onSelectRole: (blockId: string, blockRoleId: string) => void; onAddRole: (blockId: string, template: RoleTemplate) => void; onCreateRole: (blockId: string, name: string, color: string, saveToLibrary: boolean) => void; onEditRole: (blockId: string, blockRoleId: string) => void; onRemoveRole: (blockId: string, blockRoleId: string) => void; onAssignRest: (blockId: string, blockRoleId: string) => void; onEditBlock: (blockId: string) => void; onDuplicateBlock: (blockId: string) => void; onDeleteBlock: (blockId: string) => void }) {
   const [pickerAnchor, setPickerAnchor] = useState<{ left: number; top: number; bottom: number; width: number } | null>(null);
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const roles = blockRoles(block);
@@ -1439,22 +1565,25 @@ function BlockAssignmentHeader({ block, day, people, selectedRoleId, locked, rol
       return <span className="block-role-chip" key={role.id} style={{ "--role-color": blockRoleColor(role) } as React.CSSProperties}><button className="block-role-select" disabled={locked} aria-pressed={selectedRoleId === role.id} onClick={() => onSelectRole(block.id, role.id)}><span>{role.name}</span><b>{count}</b></button><button className="block-role-remove" disabled={locked} onClick={() => onRemoveRole(block.id, role.id)} aria-label={`Remove ${role.name} from ${block.label}`} title={`Remove ${role.name}`}>×</button></span>;
     })}</div>
     <div className="block-role-actions"><button ref={addButtonRef} className="role-add-button" disabled={locked} onClick={(event) => { if (pickerAnchor) { setPickerAnchor(null); return; } const rect = event.currentTarget.getBoundingClientRect(); setPickerAnchor({ left: rect.left, top: rect.top, bottom: rect.bottom, width: rect.width }); }} aria-expanded={Boolean(pickerAnchor)} aria-label={`Add role to ${block.label}`}>+</button><button disabled={locked || !selectedRole} onClick={() => selectedRole && onEditRole(block.id, selectedRole.id)}>Edit role</button>{selectedRole?.name === "On Call" ? <button onClick={() => onAssignRest(block.id, selectedRole.id)}>Assign available rest</button> : null}<span>{locked ? "Board locked" : selectedRole ? `${selectedRole.name} selected · Esc to clear` : "No role selected"}</span></div>
-    {pickerAnchor && !locked ? <RoleSearchPicker anchor={pickerAnchor} block={block} title="Add or select a role" people={people} assignments={day.assignments} currentRoleId={selectedRoleId || undefined} roleTemplates={roleTemplates} onChooseRole={(roleId) => { onSelectRole(block.id, roleId); setPickerAnchor(null); }} onAdd={(template) => { onAddRole(block.id, template); setPickerAnchor(null); }} onCreate={(name, color) => { onCreateRole(block.id, name, color); setPickerAnchor(null); }} onClose={() => { setPickerAnchor(null); window.requestAnimationFrame(() => addButtonRef.current?.focus()); }} /> : null}
+    {pickerAnchor && !locked ? <RoleSearchPicker anchor={pickerAnchor} block={block} title="Add or select a role" people={people} assignments={day.assignments} currentRoleId={selectedRoleId || undefined} roleTemplates={roleTemplates} onChooseRole={(roleId) => { onSelectRole(block.id, roleId); setPickerAnchor(null); }} onAdd={(template) => { onAddRole(block.id, template); setPickerAnchor(null); }} onCreate={(name, color, saveToLibrary) => { onCreateRole(block.id, name, color, saveToLibrary); setPickerAnchor(null); }} onClose={() => { setPickerAnchor(null); window.requestAnimationFrame(() => addButtonRef.current?.focus()); }} /> : null}
   </div>;
 }
 
-function RolesView({ data, activeDay, dayId, setDayId, onOpen, onEditBlock, onDuplicateBlock, onAddRoleToBlock, onCreateRole, onEditRole }: { data: EventState; activeDay: EventDay; dayId: string; setDayId: (id: string) => void; onOpen: (assignment: Assignment) => void; onEditBlock: (blockId: string) => void; onDuplicateBlock: (blockId: string) => void; onAddRoleToBlock: (templateId: string, blockId: string) => void; onCreateRole: () => void; onEditRole: (templateId: string) => void }) {
-  return <div className="content"><div className="section-title compact"><div><span className="kicker">Roles</span><h2>Reusable roles and block instructions</h2><p>Create a role once, drag it into any block, then tailor that block’s description without changing the master role.</p></div><DayToggle data={data} dayId={dayId} setDayId={setDayId} /></div><div className="roles-workspace"><aside className="role-library"><header><div><span className="kicker">Master list</span><h3>Role library</h3><p>Drag a role onto a block or use its add menu.</p></div><button onClick={onCreateRole}>+ New role</button></header><div>{data.roleLibrary.map((template) => {
-    const usedIn = data.days.flatMap((day) => day.blocks.filter((block) => blockRoles(block).some((role) => role.templateId === template.id || role.name.toLowerCase() === template.name.toLowerCase())).map((block) => `${day.label} · ${block.label}`));
-    return <article key={template.id} draggable onDragStart={(event) => { event.dataTransfer.setData("text/relay-role-id", template.id); event.dataTransfer.effectAllowed = "copy"; }}><i style={{ background: template.color || roleColor(template.name) }} /><div><strong>{template.name}</strong><p>{template.description}</p><small>{usedIn.length ? `Used in ${usedIn.length} block${usedIn.length === 1 ? "" : "s"}` : "Not used yet"}</small></div><button onClick={() => onEditRole(template.id)} aria-label={`Edit ${template.name}`}>Edit</button></article>;
-  })}{!data.roleLibrary.length ? <p className="empty-copy">Create your first reusable role.</p> : null}</div></aside><section className="role-block-column">{activeDay.blocks.length === 0 ? <section className="empty-builder"><h3>No blocks yet</h3><p>Add a schedule block first, then drag roles into it.</p></section> : <div className="role-blocks">{sortBlocks(activeDay.blocks).map((block) => {
+function RolesView({ data, activeDay, dayId, setDayId, roleTemplates, onOpen, onEditBlock, onAddRoleToBlock, onCreateRole, onEditRole, onImport }: { data: EventState; activeDay: EventDay; dayId: string; setDayId: (id: string) => void; roleTemplates: RoleTemplate[]; onOpen: (blockId: string, blockRoleId: string) => void; onEditBlock: (blockId: string) => void; onAddRoleToBlock: (templateId: string, blockId: string) => void; onCreateRole: () => void; onEditRole: (templateId: string) => void; onImport: () => void }) {
+  const [search, setSearch] = useState("");
+  const normalizedSearch = search.trim().toLowerCase();
+  const visibleTemplates = roleTemplates.filter((template) => `${template.name} ${template.description}`.toLowerCase().includes(normalizedSearch));
+  return <div className="content"><div className="section-title compact"><div><span className="kicker">Roles</span><h2>Reusable roles and block instructions</h2><p>Master roles are shared across events. Drag in a copy, then tailor it for this event without changing the master.</p></div><DayToggle data={data} dayId={dayId} setDayId={setDayId} /></div><div className="roles-workspace"><aside className="role-library"><header><div><span className="kicker">Master list</span><h3>Role library</h3><p>Search or drag a reusable role into a schedule block.</p></div><div className="role-library-actions"><button onClick={onImport}>Import</button><button onClick={onCreateRole}>+ New role</button></div></header><label className="role-library-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search master roles…" /></label><div>{visibleTemplates.map((template) => {
+    const usedIn = data.days.flatMap((day) => day.blocks.filter((block) => blockRoles(block).some((role) => role.templateId === template.id)).map((block) => `${day.label} · ${block.label}`));
+    return <article key={template.id} draggable onDragStart={(event) => { event.dataTransfer.setData("text/relay-role-id", template.id); event.dataTransfer.effectAllowed = "copy"; }}><i style={{ background: template.color || roleColor(template.name) }} /><div><strong>{template.name}</strong><p>{template.description}</p><small>{usedIn.length ? `Used in ${usedIn.length} block${usedIn.length === 1 ? "" : "s"}` : "Not used in this event"}</small></div><button onClick={() => onEditRole(template.id)} aria-label={`Edit ${template.name}`}>Edit</button></article>;
+  })}{!visibleTemplates.length ? <p className="empty-copy">{search ? "No master roles match this search." : "Create or import your first reusable role."}</p> : null}</div></aside><section className="role-block-column">{activeDay.blocks.length === 0 ? <section className="empty-builder"><h3>No blocks yet</h3><p>Add a schedule block first, then drag roles into it.</p></section> : <div className="role-blocks">{sortBlocks(activeDay.blocks).map((block) => {
     const roles = blockRoles(block);
-    return <section className="role-drop-zone" key={block.id} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; }} onDrop={(event) => { event.preventDefault(); onAddRoleToBlock(event.dataTransfer.getData("text/relay-role-id"), block.id); }}><header style={{ background: block.color }}><div><small>{block.start}–{block.end}</small><h3>{block.label}</h3><span>{roles.length} role{roles.length === 1 ? "" : "s"}</span></div><div className="block-header-actions"><select defaultValue="" aria-label={`Add role to ${block.label}`} onChange={(event) => { if (event.target.value) onAddRoleToBlock(event.target.value, block.id); event.currentTarget.value = ""; }}><option value="">+ Add from library</option>{data.roleLibrary.filter((template) => !roles.some((role) => role.templateId === template.id || role.name.toLowerCase() === template.name.toLowerCase())).map((template) => <option value={template.id} key={template.id}>{template.name}</option>)}</select><button onClick={() => onDuplicateBlock(block.id)}>Duplicate</button><button onClick={() => onEditBlock(block.id)}>Edit block roles</button></div></header><div className="role-list">{roles.map((role) => {
+    return <section className="role-drop-zone" key={block.id} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; }} onDrop={(event) => { event.preventDefault(); onAddRoleToBlock(event.dataTransfer.getData("text/relay-role-id"), block.id); }}><header style={{ background: block.color }}><div><small>{block.start}–{block.end}</small><h3>{block.label}</h3><span>{roles.length} role{roles.length === 1 ? "" : "s"}</span></div><div className="block-header-actions"><button onClick={() => onEditBlock(block.id)}>Edit block</button></div></header><div className="role-list">{roles.map((role) => {
       const assigned = activeDay.assignments.filter((assignment) => assignment.blockId === block.id && assignment.blockRoleId === role.id);
-      const first = assigned[0];
       const lead = data.people.find((person) => person.id === role.leadPersonId);
-      return <button key={role.id} onClick={() => first ? onOpen(first) : onEditBlock(block.id)}><i style={{ background: blockRoleColor(role) }} /><div><strong>{role.name}{role.templateId ? <em>Library</em> : null}</strong><p>{role.description}</p><small>{lead ? `Lead: ${lead.name} · ` : ""}{assigned.length} assigned</small></div><span className="member-stack">{assigned.slice(0, 3).map((assignment) => <PersonAvatar person={data.people.find((person) => person.id === assignment.personId)!} small key={assignment.id} />)}<b>{assigned.length ? assigned.map((assignment) => data.people.find((person) => person.id === assignment.personId)?.name).join(", ") : "No members assigned"}</b></span><span>→</span></button>;
-    })}{!roles.length ? <button className="empty-role-drop" onClick={() => onEditBlock(block.id)}>Drop a role here or add a custom role →</button> : null}</div></section>;
+      const linkedTemplate = roleTemplates.some((template) => template.id === role.templateId);
+      return <button key={role.id} onClick={() => onOpen(block.id, role.id)}><i style={{ background: blockRoleColor(role) }} /><div><strong>{role.name}{linkedTemplate ? <em className={role.customized ? "customized" : ""}>{role.customized ? "Customized" : "Library"}</em> : null}</strong><p>{role.description}</p><small>{lead ? `Lead: ${lead.name} · ` : ""}{assigned.length} assigned</small></div><span className="member-stack">{assigned.slice(0, 3).map((assignment) => <PersonAvatar person={data.people.find((person) => person.id === assignment.personId)!} small key={assignment.id} />)}<b>{assigned.length ? assigned.map((assignment) => data.people.find((person) => person.id === assignment.personId)?.name).join(", ") : "No members assigned"}</b></span><span>→</span></button>;
+    })}{!roles.length ? <div className="empty-role-drop">Drag a master role here, or add an event-only role from Schedule.</div> : null}</div></section>;
   })}</div>}</section></div></div>;
 }
 
@@ -1564,13 +1693,30 @@ function ProfileDialog({ person, onClose, onSave }: { person: Person; onClose: (
   return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog profile-dialog" role="dialog" aria-modal="true" aria-label={`Edit ${person.name}`}><header><div><span className="kicker">People profile</span><h2>{person.name}</h2><p>Preferences improve assignment suggestions. Private notes stay in the director workspace.</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="setup-form"><label>Role preferences<input value={preferences} onChange={(event) => setPreferences(event.target.value)} placeholder="Food Team, Participant Care" /><small>Separate preferences with commas.</small></label><label>Private notes<textarea rows={6} value={privateNote} onChange={(event) => setPrivateNote(event.target.value)} placeholder="Director-only context, accommodations, or assignment notes" /></label></div><footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" onClick={() => onSave(person.id, preferences.split(",").map((item) => item.trim()).filter(Boolean), privateNote.trim())}>Save profile</button></footer></section></div>;
 }
 
-function RoleTemplateDialog({ roleLibrary, templateId, onClose, onSave, onDelete }: { roleLibrary: RoleTemplate[]; templateId?: string; onClose: () => void; onSave: (template: RoleTemplate) => void; onDelete: (templateId: string) => void }) {
+function RoleTemplateDialog({ roleLibrary, templateId, onClose, onSave, onDelete, onMerge }: { roleLibrary: RoleTemplate[]; templateId?: string; onClose: () => void; onSave: (template: RoleTemplate) => void | Promise<void>; onDelete: (templateId: string) => void; onMerge: (sourceId: string, targetId: string) => void | Promise<void> }) {
   const existing = roleLibrary.find((template) => template.id === templateId);
   const [id] = useState(() => existing?.id ?? `role-template-${Date.now()}`);
   const [name, setName] = useState(existing?.name ?? "");
   const [description, setDescription] = useState(existing?.description ?? "");
   const [color, setColor] = useState(() => existing?.color ?? nextRoleColor(roleLibrary.map((role) => role.color)));
-  return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog profile-dialog" role="dialog" aria-modal="true" aria-label={`${existing ? "Edit" : "Create"} role template`}><header><div><span className="kicker">Role library</span><h2>{existing ? existing.name : "Create a reusable role"}</h2><p>These defaults are copied into future blocks. Leads are chosen per block.</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="setup-form"><label>Role name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Food Server" autoFocus /></label><label>Role color<div className="role-color-field"><input className="color-input" type="color" value={color} onChange={(event) => setColor(event.target.value)} /><span style={{ background: color }}>{name || "Role preview"}</span></div></label><label>Default instructions<textarea rows={5} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What should this role usually do?" /></label></div><footer>{existing ? <button className="button danger push-left" onClick={() => onDelete(existing.id)}>Delete role</button> : null}<button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!name.trim()} onClick={() => onSave({ id, name: name.trim(), description: description.trim() || `Support the event team as ${name.trim()}.`, color })}>{existing ? "Save role" : "Create role"}</button></footer></section></div>;
+  const similar = similarRoleTemplates(name, roleLibrary, existing?.id);
+  return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog profile-dialog" role="dialog" aria-modal="true" aria-label={`${existing ? "Edit" : "Create"} role template`}><header><div><span className="kicker">Master role library</span><h2>{existing ? existing.name : "Create a reusable role"}</h2><p>These responsibilities are copied into future events. Leads and event details stay with each block.</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="setup-form"><label>Role name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Food Server" autoFocus /></label>{similar.length ? <div className="similar-role-warning"><strong>Check for an existing role</strong>{similar.map((candidate) => <div key={candidate.id}><span><b>{candidate.name}</b><small>{candidate.description}</small></span>{existing ? <button type="button" onClick={() => void onMerge(existing.id, candidate.id)}>Merge into this role</button> : null}</div>)}</div> : null}<label>Role color<div className="role-color-field"><input className="color-input" type="color" value={color} onChange={(event) => setColor(event.target.value)} /><span style={{ background: color }}>{name || "Role preview"}</span></div></label><label>Description of responsibilities<textarea rows={5} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What is this role generally responsible for across events?" /></label></div><footer>{existing ? <button className="button danger push-left" onClick={() => onDelete(existing.id)}>Delete role</button> : null}<button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!name.trim() || !description.trim()} onClick={() => void onSave({ id, name: name.trim(), description: description.trim(), color, normalizedName: normalizeRoleName(name), revision: existing?.revision || 1 })}>{existing ? "Save master role" : "Create master role"}</button></footer></section></div>;
+}
+
+function RoleImportDialog({ roleTemplates, onClose, onImport }: { roleTemplates: RoleTemplate[]; onClose: () => void; onImport: (rows: RoleImportRow[]) => void | Promise<void> }) {
+  const [rows, setRows] = useState<RoleImportRow[]>([]);
+  const [fileName, setFileName] = useState("");
+  const valid = rows.filter((row) => !row.error);
+  const existingCount = valid.filter((row) => roleTemplates.some((role) => (role.normalizedName || normalizeRoleName(role.name)) === normalizeRoleName(row.name))).length;
+  const downloadTemplate = () => {
+    const url = URL.createObjectURL(new Blob([roleImportCsvTemplate], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "relay-master-role-library-template.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+  return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog role-import-dialog" role="dialog" aria-modal="true" aria-label="Import master role library"><header><div><span className="kicker">Master role library</span><h2>Import reusable roles</h2><p>Upload the Relay CSV template. Existing role names update in place; new names create master roles.</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="setup-form"><button type="button" className="button secondary import-template-button" onClick={downloadTemplate}>Download CSV template</button><label className="role-import-file">Choose completed CSV<input type="file" accept=".csv,text/csv" onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; setFileName(file.name); void file.text().then((source) => setRows(parseRoleImportCsv(source))); }} /><small>{fileName || "Required columns: Role name and Description of responsibilities. Colour is optional."}</small></label>{rows.length ? <div className="role-import-preview"><header><strong>{valid.length} ready</strong><span>{valid.length - existingCount} new · {existingCount} updates · {rows.length - valid.length} invalid</span></header>{rows.slice(0, 12).map((row) => <div className={row.error ? "invalid" : ""} key={`${row.row}-${row.name}`}><span>{row.row}</span><strong>{row.name || "Missing role name"}</strong><small>{row.error || (roleTemplates.some((role) => (role.normalizedName || normalizeRoleName(role.name)) === normalizeRoleName(row.name)) ? "Update existing" : "Create")}</small></div>)}</div> : null}</div><footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!valid.length} onClick={() => void onImport(rows)}>Import {valid.length || ""} role{valid.length === 1 ? "" : "s"}</button></footer></section></div>;
 }
 
 function EventSettingsDialog({ data, onClose, onSave }: { data: EventState; onClose: () => void; onSave: (eventType: string, judgingEnabled: boolean) => void }) {
@@ -1592,31 +1738,32 @@ function BlockEditor({ day, blockId, onClose, onSave }: { day: EventDay; blockId
   return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog block-dialog" role="dialog" aria-modal="true" aria-label={`${existing ? "Edit" : "Add"} schedule block`}><header><div><span className="kicker">{day.label} · {existing ? "Edit block" : "New block"}</span><h2>{existing ? existing.label : "Shape this part of the day."}</h2><p>Set the time and place here. Add roles directly from the schedule after saving.</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="block-form"><section><h3>Block details</h3><label>Block name<input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="e.g. Registration" autoFocus /></label><div className="form-row"><label>Start<input value={start} onChange={(event) => setStart(event.target.value)} /></label><label>End<input value={end} onChange={(event) => setEnd(event.target.value)} /></label></div><label>Location<input value={location} onChange={(event) => setLocation(event.target.value)} placeholder="Room or area" /></label><label>Block colour<input className="color-input" type="color" value={color} onChange={(event) => setColor(event.target.value)} /></label></section><section><div className="form-section-head"><div><h3>Important links</h3><p>Add the exact documents this block needs.</p></div><button type="button" onClick={() => setLinks((current) => [...current, { id: `${id}-link-${Date.now()}`, label: "", url: "" }])}>+ Add link</button></div><div className="link-builder">{links.map((link, index) => <div key={link.id}><span>{String(index + 1).padStart(2, "0")}</span><input value={link.label} onChange={(event) => updateLink(link.id, { label: event.target.value })} placeholder="Link label" /><input value={link.url} onChange={(event) => updateLink(link.id, { url: event.target.value })} placeholder="https://…" /><button type="button" onClick={() => setLinks((current) => current.filter((item) => item.id !== link.id))} aria-label={`Remove link ${link.label || index + 1}`}>×</button></div>)}</div></section></div><footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!label.trim()} onClick={() => onSave({ id, label: label.trim(), short: label.slice(0, 3).toUpperCase(), start, end, location: location.trim() || "Location TBD", color, requiredRoles: existing?.requiredRoles ?? [], roles: existing ? blockRoles(existing) : [], links: links.filter((link) => link.label.trim() && link.url.trim()) })}>{existing ? "Save block" : "Add block"}</button></footer></section></div>;
 }
 
-function RoleEditor({ data, day, editor, onClose, onSave, onRemove }: { data: EventState; day: EventDay; editor: { blockId: string; blockRoleId: string; assignmentId?: string }; onClose: () => void; onSave: (values: { name: string; description: string; leadPersonId: string; color: string; scope: "individual" | "block" | "event" }) => void; onRemove: () => void }) {
+function RoleEditor({ data, day, editor, roleTemplates, onClose, onSave, onRemove, onReplaceMaster, onPromote }: { data: EventState; day: EventDay; editor: { blockId: string; blockRoleId: string }; roleTemplates: RoleTemplate[]; onClose: () => void; onSave: (values: { name: string; description: string; leadPersonId: string; color: string; scope: "block" | "event"; resetToLibrary?: boolean }) => void; onRemove: () => void; onReplaceMaster: () => void; onPromote: () => void }) {
   const block = day.blocks.find((item) => item.id === editor.blockId)!;
   const role = blockRoles(block).find((item) => item.id === editor.blockRoleId)!;
-  const assignment = day.assignments.find((item) => item.id === editor.assignmentId);
-  const person = data.people.find((item) => item.id === assignment?.personId);
-  const [name, setName] = useState(assignment?.role ?? role.name);
-  const [description, setDescription] = useState(assignment?.description ?? role.description);
-  const [leadPersonId, setLeadPersonId] = useState(assignment?.leadPersonId ?? role.leadPersonId ?? "");
-  const [color, setColor] = useState(assignment?.color ?? blockRoleColor(role));
-  const [scope, setScope] = useState<"individual" | "block" | "event">(assignment ? "individual" : "block");
+  const source = roleTemplates.find((template) => template.id === role.templateId);
+  const [name, setName] = useState(role.name);
+  const [description, setDescription] = useState(role.description);
+  const [leadPersonId, setLeadPersonId] = useState(role.leadPersonId ?? "");
+  const [color, setColor] = useState(blockRoleColor(role));
+  const [scope, setScope] = useState<"block" | "event">("block");
+  const [resetToLibrary, setResetToLibrary] = useState(false);
   const saveEditor = () => {
-    if (name.trim()) onSave({ name: name.trim(), description: description.trim(), leadPersonId, color, scope });
+    if (name.trim()) onSave({ name: name.trim(), description: description.trim(), leadPersonId, color, scope, resetToLibrary });
   };
   return <div className="drawer-backdrop transparent" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-    <section className="role-editor-popover" role="dialog" aria-modal="true" aria-label={`Edit ${assignment ? `${person?.name}'s assignment` : role.name}`} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); onClose(); } else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); saveEditor(); } }}>
-      <header><div><span className="kicker">{assignment ? "Individual assignment" : `${block.label} · Role`}</span><h2>{assignment ? `${person?.name} · ${assignment.role}` : `Edit ${role.name}`}</h2><p>{assignment ? "These changes apply only to this person." : "Choose whether this change applies to this block or the whole event."}</p></div><button onClick={onClose} aria-label="Close">×</button></header>
+    <section className="role-editor-popover" role="dialog" aria-modal="true" aria-label={`Edit ${role.name}`} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); onClose(); } else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); saveEditor(); } }}>
+      <header><div><span className="kicker">{block.label} · Shared role</span><h2>Edit {role.name}</h2><p>Changes apply to everyone assigned to this role in the selected scope.</p></div><button onClick={onClose} aria-label="Close">×</button></header>
       <div className="role-editor-body">
-        {!assignment ? <div className="scope-switch" aria-label="Edit scope">{([['block', 'This block'], ['event', 'Whole event']] as const).map(([id, label]) => <button key={id} className={scope === id ? "active" : ""} onClick={() => setScope(id)}>{label}</button>)}</div> : null}
-        <p className="scope-note">{scope === "individual" ? `Only ${person?.name}'s assignment changes.` : scope === "block" ? `Updates everyone assigned to this role in ${block.label}.` : "Updates this role throughout the current event; individual overrides remain unchanged."}</p>
-        <label>Role name<input value={name} onChange={(event) => setName(event.target.value)} autoFocus /></label>
-        <label>Role color<div className="role-color-field"><input className="color-input" type="color" value={color} onChange={(event) => setColor(event.target.value)} /><span style={{ background: color }}>{name || "Role preview"}</span></div></label>
+        <div className="scope-switch" aria-label="Edit scope"><button className={scope === "block" ? "active" : ""} onClick={() => setScope("block")}>This block</button>{role.templateId ? <button className={scope === "event" ? "active" : ""} onClick={() => setScope("event")}>Whole event</button> : null}</div>
+        <p className="scope-note">{scope === "block" ? `Updates all ${day.assignments.filter((assignment) => assignment.blockRoleId === role.id).length} people assigned to this role in ${block.label}.` : "Updates every event role linked to this master template; other events remain unchanged."}</p>
+        {source ? <div className="role-source-note"><span>{role.customized || resetToLibrary ? "Customized from" : "Linked to"} <strong>{source.name}</strong> · copied revision {role.templateRevision || 1}{(role.templateRevision || 1) !== (source.revision || 1) ? ` · master revision ${source.revision || 1} available` : ""}</span>{role.customized || (role.templateRevision || 1) !== (source.revision || 1) ? <button type="button" onClick={() => { setName(source.name); setDescription(source.description); setColor(source.color || roleColor(source.name)); setResetToLibrary(true); }}>Restore library defaults</button> : null}</div> : <div className="role-source-note"><span>Event-only role · not in the master library</span></div>}
+        <label>Role name<input value={name} onChange={(event) => { setName(event.target.value); setResetToLibrary(false); }} autoFocus /></label>
+        <label>Role color<div className="role-color-field"><input className="color-input" type="color" value={color} onChange={(event) => { setColor(event.target.value); setResetToLibrary(false); }} /><span style={{ background: color }}>{name || "Role preview"}</span></div></label>
         <label>Role lead<select value={leadPersonId} onChange={(event) => setLeadPersonId(event.target.value)}><option value="">No role lead</option>{data.people.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-        <label>Instructions<textarea rows={5} value={description} onChange={(event) => setDescription(event.target.value)} /></label>
+        <label>Responsibilities and event details<textarea rows={5} value={description} onChange={(event) => { setDescription(event.target.value); setResetToLibrary(false); }} /></label>
       </div>
-      <footer>{!assignment ? <button className="button danger" onClick={onRemove}>Remove from block</button> : null}<span /><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!name.trim()} onClick={saveEditor}>{scope === "individual" ? "Save assignment" : scope === "event" ? "Save across event" : "Save this block"}</button></footer>
+      <footer><button className="button danger" onClick={onRemove}>Remove from block</button>{source ? <button className="button secondary" onClick={onReplaceMaster}>Replace master</button> : <button className="button secondary" onClick={onPromote}>Add to library</button>}<span /><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!name.trim()} onClick={saveEditor}>{scope === "event" ? "Save across event" : "Save this block"}</button></footer>
     </section>
   </div>;
 }

@@ -22,7 +22,7 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.match(workspace, /mapped automatically to the current schedule blocks/);
   assert.match(workspace, /Preferences and private notes/);
   assert.match(workspace, /Role library/);
-  assert.match(workspace, /Add from library/);
+  assert.doesNotMatch(workspace, /Add from library/);
   assert.match(workspace, /Event modules/);
   assert.match(workspace, /Judging rooms/);
   assert.match(workspace, /Prep mini-compendium/);
@@ -67,7 +67,14 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.match(workspace, /dragGestureRef/);
   assert.match(workspace, /pointermove/);
   assert.match(workspace, /onMoveAssignment/);
-  assert.match(workspace, /Add this color and role to the shared library/);
+  assert.match(workspace, /Add to this event/);
+  assert.match(workspace, /Add to event \+ library/);
+  assert.match(workspace, /Search master roles/);
+  assert.match(workspace, /Import reusable roles/);
+  assert.match(workspace, /Description of responsibilities/);
+  assert.match(workspace, /Customized/);
+  assert.match(workspace, /Restore library defaults/);
+  assert.match(workspace, /Replace master/);
   assert.match(workspace, /role="alertdialog"/);
   assert.match(workspace, /Delete block/);
   assert.doesNotMatch(workspace, /window\.confirm\(`Delete “\$\{block\.label\}/);
@@ -103,7 +110,12 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.doesNotMatch(workspace, /Intensity|People needed|Role coverage/);
   assert.match(roleApi, /roleTemplates/);
   assert.match(roleApi, /roleTemplates\.color/);
+  assert.match(roleApi, /normalizeRoleName/);
+  assert.match(roleApi, /mergedIntoId/);
+  assert.match(roleApi, /replaceRoleTemplateSource/);
   assert.match(schema, /role_templates/);
   assert.match(schema, /color:\s*text\("color"\)/);
+  assert.match(schema, /normalizedName:\s*text\("normalized_name"\)/);
+  assert.match(schema, /revision:\s*integer\("revision"\)/);
   assert.doesNotMatch(`${page}${layout}${workspace}`, /codex-preview|SkeletonPreview/);
 });
