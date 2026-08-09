@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { RelayWorkspace } from "./relay-workspace";
+import Link from "next/link";
 
 export const metadata: Metadata = {
   title: "Relay — Event operations, in sync",
@@ -8,5 +8,16 @@ export const metadata: Metadata = {
 };
 
 export default function Home() {
-  return <RelayWorkspace />;
+  return (
+    <main className="access-page">
+      <section className="access-card landing-card">
+        <div className="access-brand"><span>R</span> relay</div>
+        <span className="kicker">Event operations, in sync</span>
+        <h1>One plan for the people making it happen.</h1>
+        <p>Exec schedules are shared through a private event link. Administrators can sign in to plan, publish, and manage access.</p>
+        <Link className="button primary access-action" href="/admin">Open admin workspace</Link>
+        <small>Looking for your exec schedule? Open the event link shared by your organizer.</small>
+      </section>
+    </main>
+  );
 }

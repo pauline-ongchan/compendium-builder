@@ -15,6 +15,13 @@
       "when": 1785998070000,
       "tag": "0001_shared_role_templates",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786270800000,
+      "tag": "0002_admin_exec_access",
+      "breakpoints": true
     }
   ]
 }

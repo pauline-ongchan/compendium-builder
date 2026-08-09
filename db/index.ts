@@ -42,4 +42,17 @@ export async function ensureDb() {
     )
   `);
   await db.execute(sql`ALTER TABLE role_templates ADD COLUMN IF NOT EXISTS color TEXT NOT NULL DEFAULT '#d8d2ef'`);
+  await db.execute(sql`ALTER TABLE event_states ADD COLUMN IF NOT EXISTS published_payload TEXT`);
+  await db.execute(sql`ALTER TABLE event_states ADD COLUMN IF NOT EXISTS share_token TEXT`);
+  await db.execute(sql`ALTER TABLE event_states ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ`);
+  await db.execute(sql`ALTER TABLE event_states ADD COLUMN IF NOT EXISTS published_by TEXT`);
+  await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS event_states_share_token_unique ON event_states (share_token)`);
+  await db.execute(sql`
+    UPDATE event_states
+    SET published_payload = payload,
+        published_at = updated_at,
+        published_by = updated_by
+    WHERE published_payload IS NULL
+      AND LOWER(COALESCE(payload::jsonb ->> 'publishedAt', '')) NOT IN ('', 'not published')
+  `);
 }

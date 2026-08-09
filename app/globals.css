@@ -464,6 +464,8 @@ button { color: inherit; }
 .exec-header > div { display: flex; align-items: center; gap: 10px; }
 .exec-profile, .exit-preview, .icon-button { border: 0; background: transparent; color: white; cursor: pointer; }
 .exec-profile { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+.exec-profile-picker select { max-width: 150px; border: 0; background: transparent; color: white; font: inherit; cursor: pointer; }
+.exec-profile-picker option { color: var(--ink); }
 .icon-button { position: relative; font-size: 0; width: 30px; height: 30px; border: 1px solid #41504c; border-radius: 50%; }
 .icon-button::before { content: ""; width: 8px; height: 9px; border: 1px solid #dce4df; border-radius: 6px 6px 3px 3px; position: absolute; left: 10px; top: 8px; }
 .icon-button span { width: 5px; height: 5px; background: var(--coral); border-radius: 50%; position: absolute; right: -1px; top: -1px; }
@@ -855,3 +857,16 @@ button { color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+/* Authentication and shared-link states */
+.access-page { min-height: 100vh; display: grid; place-items: center; padding: 32px; background: #f4f1ea; color: #1b1b1b; }
+.access-card { width: min(520px, 100%); padding: 42px; border: 1px solid #d8d2c7; border-radius: 24px; background: #fffdf8; box-shadow: 0 24px 70px rgba(43, 36, 25, .1); }
+.access-card h1 { margin: 12px 0; font-size: clamp(2rem, 6vw, 3.4rem); line-height: 1; letter-spacing: -.055em; }
+.access-card p { color: #625e56; line-height: 1.6; }
+.access-card small { display: block; margin-top: 18px; color: #777168; line-height: 1.5; }
+.access-brand { display: flex; width: max-content; align-items: center; gap: 9px; margin-bottom: 38px; color: inherit; font-weight: 800; text-decoration: none; }
+.access-brand span { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 10px; background: #23231f; color: #fff; }
+.access-action { display: flex; width: 100%; justify-content: center; margin-top: 26px; text-decoration: none; }
+.access-secondary { display: block; margin-top: 18px; color: #514d46; text-align: center; }
+.access-error { padding: 12px 14px; border: 1px solid #e4a99f; border-radius: 10px; background: #fff0ed; color: #9b3024 !important; }
+.landing-card { width: min(620px, 100%); }
+.audit-line { display: block; margin-top: 6px; color: #6f6a62; }

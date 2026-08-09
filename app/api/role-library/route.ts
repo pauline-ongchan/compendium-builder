@@ -1,8 +1,11 @@
 import { asc, eq } from "drizzle-orm";
+import { requireAdminApi } from "../../../auth";
 import { ensureDb, getDb } from "../../../db";
 import { roleTemplates } from "../../../db/schema";
 
 export async function GET() {
+  const authorization = await requireAdminApi();
+  if ("response" in authorization) return authorization.response;
   try {
     await ensureDb();
     const roles = await getDb().select({ id: roleTemplates.id, name: roleTemplates.name, description: roleTemplates.description, color: roleTemplates.color }).from(roleTemplates).orderBy(asc(roleTemplates.name));
@@ -13,13 +16,15 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
+  const authorization = await requireAdminApi();
+  if ("response" in authorization) return authorization.response;
   try {
     const role = await request.json();
     if (!role || typeof role.id !== "string" || typeof role.name !== "string" || !role.name.trim()) {
       return Response.json({ error: "Invalid role template" }, { status: 400 });
     }
     await ensureDb();
-    const updatedBy = request.headers.get("oai-authenticated-user-email") ?? "local-director";
+    const updatedBy = authorization.email;
     const color = typeof role.color === "string" && /^#[0-9a-f]{6}$/i.test(role.color) ? role.color : "#d8d2ef";
     await getDb().insert(roleTemplates).values({ id: role.id, name: role.name.trim(), description: typeof role.description === "string" ? role.description.trim() : "", color, updatedBy }).onConflictDoUpdate({
       target: roleTemplates.id,
@@ -32,6 +37,8 @@ export async function PUT(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  const authorization = await requireAdminApi();
+  if ("response" in authorization) return authorization.response;
   try {
     const id = new URL(request.url).searchParams.get("id");
     if (!id) return Response.json({ error: "Role template ID is required" }, { status: 400 });

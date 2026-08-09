@@ -3,8 +3,9 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("ships Relay product metadata and schedule-first role assignment", async () => {
-  const [page, layout, workspace, styles, roleApi, schema] = await Promise.all([
+  const [page, adminPage, layout, workspace, styles, roleApi, schema] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/admin/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/relay-workspace.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
@@ -12,7 +13,7 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
   ]);
 
-  assert.match(page, /RelayWorkspace/);
+  assert.match(adminPage, /RelayWorkspace/);
   assert.match(page, /Event operations, in sync/);
   assert.match(layout, /Relay — Event operations, in sync/);
   assert.match(workspace, /Import from Google Docs/);
@@ -105,5 +106,5 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.match(roleApi, /roleTemplates\.color/);
   assert.match(schema, /role_templates/);
   assert.match(schema, /color:\s*text\("color"\)/);
-  assert.doesNotMatch(`${page}${layout}${workspace}`, /codex-preview|SkeletonPreview/);
+  assert.doesNotMatch(`${page}${adminPage}${layout}${workspace}`, /codex-preview|SkeletonPreview/);
 });
