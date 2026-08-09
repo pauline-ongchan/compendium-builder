@@ -15,7 +15,7 @@ import { parseScheduleTable } from "./schedule-import";
 import { getAssignmentAvailabilityChecks, getScheduleChecksViewState, type ScheduleCheck } from "./schedule-checks";
 import { getPublicationStatus } from "./publication-status";
 import { validateDayCount } from "./event-setup";
-import { moveRoleOptionIndex, roleColor } from "./role-presentation";
+import { moveRoleOptionIndex, nextRoleColor, roleColor } from "./role-presentation";
 
 type Section = "schedule" | "prep" | "people" | "roles" | "judging" | "resources";
 type ExecSection = "today" | "schedule" | "prep" | "availability" | "overview" | "directory";
@@ -1310,7 +1310,7 @@ function ScheduleView({ data, activeDay, dayId, setDayId, warnings, reviewTarget
 
 function RoleSearchPicker({ anchor, block, title, people, assignments, currentRoleId, roleTemplates, onChooseRole, onClear, onAdd, onCreate, onClose }: { anchor: { left: number; top: number; bottom: number; width: number }; block: EventBlock; title: string; people: Person[]; assignments: Assignment[]; currentRoleId?: string; roleTemplates: RoleTemplate[]; onChooseRole: (blockRoleId: string) => void; onClear?: () => void; onAdd: (template: RoleTemplate) => void; onCreate: (name: string, color: string) => void; onClose: () => void }) {
   const [search, setSearch] = useState("");
-  const [newRoleColor, setNewRoleColor] = useState(roleColor("New role"));
+  const [newRoleColor, setNewRoleColor] = useState(() => nextRoleColor([...roleTemplates.map((role) => role.color), ...blockRoles(block).map((role) => role.color)]));
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const [position, setPosition] = useState({ left: -1000, top: -1000, maxHeight: 430, visible: false });
   const pickerRef = useRef<HTMLDivElement>(null);
@@ -1569,7 +1569,7 @@ function RoleTemplateDialog({ roleLibrary, templateId, onClose, onSave, onDelete
   const [id] = useState(() => existing?.id ?? `role-template-${Date.now()}`);
   const [name, setName] = useState(existing?.name ?? "");
   const [description, setDescription] = useState(existing?.description ?? "");
-  const [color, setColor] = useState(existing?.color ?? roleColor(name || "New role"));
+  const [color, setColor] = useState(() => existing?.color ?? nextRoleColor(roleLibrary.map((role) => role.color)));
   return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog profile-dialog" role="dialog" aria-modal="true" aria-label={`${existing ? "Edit" : "Create"} role template`}><header><div><span className="kicker">Role library</span><h2>{existing ? existing.name : "Create a reusable role"}</h2><p>These defaults are copied into future blocks. Leads are chosen per block.</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="setup-form"><label>Role name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Food Server" autoFocus /></label><label>Role color<div className="role-color-field"><input className="color-input" type="color" value={color} onChange={(event) => setColor(event.target.value)} /><span style={{ background: color }}>{name || "Role preview"}</span></div></label><label>Default instructions<textarea rows={5} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What should this role usually do?" /></label></div><footer>{existing ? <button className="button danger push-left" onClick={() => onDelete(existing.id)}>Delete role</button> : null}<button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!name.trim()} onClick={() => onSave({ id, name: name.trim(), description: description.trim() || `Support the event team as ${name.trim()}.`, color })}>{existing ? "Save role" : "Create role"}</button></footer></section></div>;
 }
 

@@ -59,6 +59,7 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.match(workspace, /Role library update failed:/);
   assert.match(workspace, /Role color/);
   assert.match(workspace, /New role color/);
+  assert.match(workspace, /nextRoleColor/);
   assert.match(workspace, /Add or select a role/);
   assert.match(workspace, /createPortal\(picker, document\.body\)/);
   assert.match(workspace, /keepHighlightedRoleVisible/);
