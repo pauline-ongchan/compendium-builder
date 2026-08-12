@@ -18,7 +18,8 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.match(page, /redirect\("\/admin\/sign-in"\)/);
   assert.doesNotMatch(page, /Open Relay portal/);
   assert.match(layout, /Relay — Event operations, in sync/);
-  assert.match(workspace, /Import from Google Docs/);
+  assert.match(workspace, /onClick=\{onImport\}>Import<\/button>/);
+  assert.doesNotMatch(workspace, />Import Google Doc<\/button>|>Import from Google Docs<\/button>/);
   assert.match(workspace, /Universal exec roster/);
   assert.match(workspace, /Click to change/);
   assert.match(workspace, /WORKSPACE_MODE_KEY/);
