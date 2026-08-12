@@ -354,6 +354,10 @@ function sortBlocks(blocks: EventBlock[]) {
   return [...blocks].sort((a, b) => timeToMinutes(a.start) - timeToMinutes(b.start) || timeToMinutes(a.end) - timeToMinutes(b.end) || a.label.localeCompare(b.label));
 }
 
+function sortPeopleAlphabetically(people: Person[]) {
+  return [...people].sort((a, b) => a.name.localeCompare(b.name, "en", { sensitivity: "base", numeric: true }) || a.id.localeCompare(b.id));
+}
+
 function normalizeEvent(raw: EventState): EventState {
   const eventId = raw.eventId || "productx-2026";
   const legacyGroups = Array.from(new Set((raw.people ?? []).map((person) => person.team).filter(Boolean))).map((name, index) => ({
@@ -435,7 +439,7 @@ function normalizeEvent(raw: EventState): EventState {
     prepSessions,
     prepTasks: raw.prepTasks ?? [],
     roleLibrary,
-    people: raw.people.map((person) => ({
+    people: sortPeopleAlphabetically(raw.people.map((person) => ({
       ...person,
       phone: person.phone ?? "",
       email: person.email ?? "",
@@ -451,7 +455,7 @@ function normalizeEvent(raw: EventState): EventState {
           ? person.availabilitySlots[day.id]
           : slotsFromLegacyAvailability(day, person.availability?.[day.id]),
       ])),
-    })),
+    }))),
     days,
   };
   return mapTimeAvailabilityToBlocks(normalized);
@@ -1739,8 +1743,9 @@ function PrepView({ data, onSave, onShare }: { data: EventState; onSave: (sessio
 }
 
 function PeopleView({ data, activeDay, dayId, setDayId, onAvailability }: { data: EventState; activeDay: EventDay; dayId: string; setDayId: (id: string) => void; onAvailability: (personId: string, blockId: string) => void }) {
+  const alphabetizedPeople = sortPeopleAlphabetically(data.people);
   return <div className="content"><div className="section-title compact"><div><span className="kicker">People</span><h2>Event availability</h2><p>The universal roster is managed in Settings. Availability stays specific to this event and maps automatically to schedule blocks.</p></div><DayToggle data={data} dayId={dayId} setDayId={setDayId} /></div>
-    <section className="availability-card"><div className="availability-scroll"><div className="availability-grid" style={{ "--columns": activeDay.blocks.length } as React.CSSProperties}><div className="availability-corner">Exec</div>{activeDay.blocks.map((block) => <div className="availability-head" key={block.id}><strong>{block.short}</strong><small>{block.start}–{block.end}</small></div>)}{data.people.map((person) => <div className="availability-row" key={person.id}><div className="availability-person"><PersonAvatar person={person} small /><div><strong>{person.name}</strong><small>{person.team}</small></div></div>{activeDay.blocks.map((block) => { const status = person.availability[activeDay.id]?.[block.id] ?? "unavailable"; const label = status === "available" ? "Free for the full block" : status === "conditional" ? "Free for part of the block" : "Not free for this block"; return <button type="button" key={block.id} className={`availability-block ${status}`} title={`${block.label}: ${label}. Click to change.`} aria-label={`${person.name}, ${block.label}: ${label}. Click to change.`} onClick={() => onAvailability(person.id, block.id)}><span>{status === "available" ? "✓" : status === "conditional" ? "~" : "×"}</span></button>; })}</div>)}</div></div></section>
+    <section className="availability-card"><div className="availability-scroll"><div className="availability-grid" style={{ "--columns": activeDay.blocks.length } as React.CSSProperties}><div className="availability-corner">Exec</div>{activeDay.blocks.map((block) => <div className="availability-head" key={block.id}><strong>{block.short}</strong><small>{block.start}–{block.end}</small></div>)}{alphabetizedPeople.map((person) => <div className="availability-row" key={person.id}><div className="availability-person"><PersonAvatar person={person} small /><div><strong>{person.name}</strong><small>{person.team}</small></div></div>{activeDay.blocks.map((block) => { const status = person.availability[activeDay.id]?.[block.id] ?? "unavailable"; const label = status === "available" ? "Free for the full block" : status === "conditional" ? "Free for part of the block" : "Not free for this block"; return <button type="button" key={block.id} className={`availability-block ${status}`} title={`${block.label}: ${label}. Click to change.`} aria-label={`${person.name}, ${block.label}: ${label}. Click to change.`} onClick={() => onAvailability(person.id, block.id)}><span>{status === "available" ? "✓" : status === "conditional" ? "~" : "×"}</span></button>; })}</div>)}</div></div></section>
   </div>;
 }
 
@@ -1864,7 +1869,7 @@ function ScheduleImportDialog({ day, onClose, onImport }: { day: EventDay; onClo
 }
 
 function RosterDialog({ data, onClose, onSave }: { data: EventState; onClose: () => void; onSave: (people: Person[], groups: ExecGroup[]) => void }) {
-  const [people, setPeople] = useState<Person[]>(() => structuredClone(data.people));
+  const [people, setPeople] = useState<Person[]>(() => sortPeopleAlphabetically(structuredClone(data.people)));
   const [groups, setGroups] = useState<ExecGroup[]>(() => structuredClone(data.groups));
   const [importText, setImportText] = useState("");
   const [newGroup, setNewGroup] = useState("");
@@ -1914,7 +1919,7 @@ function RosterDialog({ data, onClose, onSave }: { data: EventState; onClose: ()
       return { id, name, initials: initialsFor(name), team: nextGroups.find((group) => groupIds.includes(group.id))?.name ?? "Unassigned", color: colorWheel[index % colorWheel.length], preferences: [], privateNote: "", phone, email, groupIds, availability: {}, prepAvailability: {} } satisfies Person;
     }).filter((person) => person.name);
     setGroups(nextGroups);
-    setPeople((current) => [...current, ...imported.filter((person) => !current.some((existing) => Boolean(existing.email) && existing.email.toLowerCase() === person.email.toLowerCase() || existing.name.toLowerCase() === person.name.toLowerCase()))]);
+    setPeople((current) => sortPeopleAlphabetically([...current, ...imported.filter((person) => !current.some((existing) => Boolean(existing.email) && existing.email.toLowerCase() === person.email.toLowerCase() || existing.name.toLowerCase() === person.name.toLowerCase()))]));
     setImportText("");
   };
   const allSelected = people.length > 0 && selectedIds.length === people.length;

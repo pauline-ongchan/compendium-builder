@@ -46,6 +46,10 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.match(workspace, /Delete team \$\{group\.name\}/);
   assert.match(workspace, /no execs or assignments will be deleted/);
   assert.match(workspace, /next\.groups = structuredClone\(groups\)/);
+  assert.match(workspace, /function sortPeopleAlphabetically/);
+  assert.match(workspace, /people: sortPeopleAlphabetically\(raw\.people\.map/);
+  assert.match(workspace, /setPeople\(\(current\) => sortPeopleAlphabetically/);
+  assert.match(workspace, /alphabetizedPeople\.map/);
   assert.match(workspace, /if \(data\.prepEnabled\) visibleDirectorSections\.push\(\["prep", "Prep"\]\)/);
   assert.match(workspace, /if \(data\.judgingEnabled\) visibleDirectorSections\.push\(\["judging", "Judging rooms"\]\)/);
   assert.match(workspace, /Judging rooms/);
