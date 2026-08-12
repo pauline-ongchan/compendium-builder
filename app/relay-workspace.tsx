@@ -125,6 +125,7 @@ type EventState = {
   venue: string;
   publishedAt: string;
   draftChanges: number;
+  prepEnabled: boolean;
   judgingEnabled: boolean;
   people: Person[];
   days: EventDay[];
@@ -276,6 +277,7 @@ const seedData: EventState = {
   venue: "Henry Angus Building",
   publishedAt: "Aug 3, 2:14 PM",
   draftChanges: 3,
+  prepEnabled: true,
   judgingEnabled: true,
   people: peopleBase.map(([id, name, initials, team, color, preferences]) => ({
     id, name, initials, team, color, preferences: [...preferences],
@@ -425,6 +427,7 @@ function normalizeEvent(raw: EventState): EventState {
   const normalized: EventState = {
     ...raw,
     eventId,
+    prepEnabled: raw.prepEnabled ?? Boolean(prepSessions.length || raw.prepTasks?.length),
     judgingEnabled: raw.judgingEnabled ?? (raw.eventType === "Competition" || Boolean(raw.judgingRooms?.length)),
     groups,
     contacts: raw.contacts ?? [],
@@ -476,6 +479,7 @@ function createBlankEvent(values: { name: string; type: string; venue: string; s
     venue: values.venue,
     publishedAt: "Not published",
     draftChanges: 1,
+    prepEnabled: false,
     judgingEnabled: values.type === "Competition",
     people: people.map((person) => ({
       ...person,
@@ -504,7 +508,7 @@ function mergeUniversalRoster(event: EventState, people: Person[], groups: ExecG
   const groupMap = new Map([...event.groups, ...groups].map((group) => [group.id, structuredClone(group)]));
   next.groups = Array.from(groupMap.values());
   const incoming = new Map(people.map((person) => [person.id, person]));
-  next.people = event.people.map((eventPerson) => {
+  next.people = event.people.filter((eventPerson) => incoming.has(eventPerson.id)).map((eventPerson) => {
     const rosterPerson = incoming.get(eventPerson.id);
     if (!rosterPerson) return eventPerson;
     return {
@@ -530,6 +534,9 @@ function mergeUniversalRoster(event: EventState, people: Person[], groups: ExecG
       prepAvailability: Object.fromEntries(next.prepSessions.map((session) => [session.id, "available"])),
     });
   }
+  const retainedPersonIds = new Set(people.map((person) => person.id));
+  for (const day of next.days) day.assignments = day.assignments.filter((assignment) => retainedPersonIds.has(assignment.personId));
+  next.prepTasks = next.prepTasks.map((task) => retainedPersonIds.has(task.ownerPersonId) ? task : { ...task, ownerPersonId: "" });
   next.draftChanges += 1;
   return normalizeEvent(next);
 }
@@ -1338,9 +1345,9 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
     }
   };
 
-  const saveEventSettings = (eventType: string, judgingEnabled: boolean) => {
-    const next = { ...structuredClone(data), eventType, judgingEnabled, draftChanges: data.draftChanges + 1 };
-    if (!judgingEnabled && section === "judging") setSection("schedule");
+  const saveEventSettings = (prepEnabled: boolean, judgingEnabled: boolean) => {
+    const next = { ...structuredClone(data), prepEnabled, judgingEnabled, draftChanges: data.draftChanges + 1 };
+    if ((!prepEnabled && section === "prep") || (!judgingEnabled && section === "judging")) setSection("settings");
     void save(next, "Event modules updated.");
   };
 
@@ -1404,12 +1411,12 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
     void save(next, `${slot.team} marked ${slot.status.toLowerCase()}.`);
   };
 
-  const directorSections: [Section, string, string][] = [
-    ["schedule", "Schedule", "02"],
-    ["people", "People + availability", "03"],
-    ["roles", "Roles + instructions", "04"],
-    ["resources", "Event overview", "05"],
-  ];
+  const visibleDirectorSections: [Section, string][] = [["schedule", "Schedule"]];
+  if (data.prepEnabled) visibleDirectorSections.push(["prep", "Prep"]);
+  visibleDirectorSections.push(["people", "People + availability"], ["roles", "Roles + instructions"]);
+  if (data.judgingEnabled) visibleDirectorSections.push(["judging", "Judging rooms"]);
+  visibleDirectorSections.push(["resources", "Event overview"]);
+  const directorSections = visibleDirectorSections.map(([id, label], index): [Section, string, string] => [id, label, String(index + 2).padStart(2, "0")]);
   const roleRemovalDay = roleRemoval ? data.days.find((day) => day.id === roleRemoval.dayId) : undefined;
   const roleRemovalBlock = roleRemovalDay?.blocks.find((block) => block.id === roleRemoval?.blockId);
   const roleRemovalRole = roleRemovalBlock && roleRemoval ? blockRoles(roleRemovalBlock).find((role) => role.id === roleRemoval.blockRoleId) : undefined;
@@ -1433,7 +1440,7 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
                 <button key={id} className={section === id ? "active" : ""} onClick={() => setSection(id)}><span>{number}</span>{label}{id === "schedule" && warnings.length > 0 ? <b>{warnings.length}</b> : null}</button>
               ))}
             </nav>
-            <div className="sidebar-bottom"><button className={["settings", "prep", "judging"].includes(section) ? "active" : ""} onClick={() => setSection("settings")}><span aria-hidden="true">⚙</span><div><strong>Settings</strong><small>Roster, prep + modules</small></div><span aria-hidden="true">→</span></button></div>
+            <div className="sidebar-bottom"><button className={section === "settings" ? "active" : ""} onClick={() => setSection("settings")}><span aria-hidden="true">⚙</span><div><strong>Settings</strong><small>Roster + modules</small></div><span aria-hidden="true">→</span></button></div>
           </aside>
           <main className="workspace">
             <header className="workspace-header">
@@ -1447,7 +1454,7 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
             {section === "roles" && <RolesView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} roleTemplates={roleTemplates} onOpen={(blockId, blockRoleId) => setRoleEditor({ blockId, blockRoleId })} onEditBlock={(blockId) => setBlockEditor({ blockId })} onAddRoleToBlock={addLibraryRoleToBlock} onCreateRole={() => setRoleTemplateEditor({})} onEditRole={(templateId) => setRoleTemplateEditor({ templateId })} onImport={() => setShowRoleImport(true)} />}
             {section === "judging" && <JudgingView data={data} onCycle={cycleJudgingStatus} />}
             {section === "resources" && <ResourcesView data={data} onSave={saveOverview} />}
-            {section === "settings" && <SettingsView data={data} onSave={saveEventSettings} onManageRoster={() => setShowRoster(true)} onOpenPrep={() => setSection("prep")} onOpenJudging={() => setSection("judging")} />}
+            {section === "settings" && <SettingsView data={data} onSave={saveEventSettings} onManageRoster={() => setShowRoster(true)} />}
           </main>
           {roleEditor && <RoleEditor data={data} day={activeDay} editor={roleEditor} roleTemplates={roleTemplates} onClose={() => setRoleEditor(null)} onSave={saveRoleEdit} onRemove={removeRoleFromBlock} onReplaceMaster={() => void replaceMasterFromRole(roleEditor.blockId, roleEditor.blockRoleId)} onPromote={() => void promoteRoleToLibrary(roleEditor.blockId, roleEditor.blockRoleId)} />}
           {blockEditor && <BlockEditor day={activeDay} blockId={blockEditor.blockId} onClose={() => setBlockEditor(null)} onSave={saveBlock} />}
@@ -1734,7 +1741,6 @@ function PrepView({ data, onSave, onShare }: { data: EventState; onSave: (sessio
 
 function PeopleView({ data, activeDay, dayId, setDayId, onAvailability }: { data: EventState; activeDay: EventDay; dayId: string; setDayId: (id: string) => void; onAvailability: (personId: string, blockId: string) => void }) {
   return <div className="content"><div className="section-title compact"><div><span className="kicker">People</span><h2>Event availability</h2><p>The universal roster is managed in Settings. Availability stays specific to this event and maps automatically to schedule blocks.</p></div><DayToggle data={data} dayId={dayId} setDayId={setDayId} /></div>
-    <div className="people-summary"><div><strong>{data.people.length}</strong><span>execs available to schedule</span></div><div><strong>{data.groups.length}</strong><span>teams</span></div></div>
     <section className="availability-card"><div className="availability-scroll"><div className="availability-grid" style={{ "--columns": activeDay.blocks.length } as React.CSSProperties}><div className="availability-corner">Exec</div>{activeDay.blocks.map((block) => <div className="availability-head" key={block.id}><strong>{block.short}</strong><small>{block.start}–{block.end}</small></div>)}{data.people.map((person) => <div className="availability-row" key={person.id}><div className="availability-person"><PersonAvatar person={person} small /><div><strong>{person.name}</strong><small>{person.team}</small></div></div>{activeDay.blocks.map((block) => { const status = person.availability[activeDay.id]?.[block.id] ?? "unavailable"; const label = status === "available" ? "Free for the full block" : status === "conditional" ? "Free for part of the block" : "Not free for this block"; return <button type="button" key={block.id} className={`availability-block ${status}`} title={`${block.label}: ${label}. Click to change.`} aria-label={`${person.name}, ${block.label}: ${label}. Click to change.`} onClick={() => onAvailability(person.id, block.id)}><span>{status === "available" ? "✓" : status === "conditional" ? "~" : "×"}</span></button>; })}</div>)}</div></div></section>
   </div>;
 }
@@ -1863,7 +1869,16 @@ function RosterDialog({ data, onClose, onSave }: { data: EventState; onClose: ()
   const [groups, setGroups] = useState<ExecGroup[]>(() => structuredClone(data.groups));
   const [importText, setImportText] = useState("");
   const [newGroup, setNewGroup] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<string[]>([]);
   const updatePerson = (id: string, patch: Partial<Person>) => setPeople((current) => current.map((person) => person.id === id ? { ...person, ...patch } : person));
+  const toggleSelected = (id: string) => setSelectedIds((current) => current.includes(id) ? current.filter((personId) => personId !== id) : [...current, id]);
+  const confirmRosterDelete = () => {
+    const deletedIds = new Set(pendingDeleteIds);
+    setPeople((current) => current.filter((person) => !deletedIds.has(person.id)));
+    setSelectedIds((current) => current.filter((personId) => !deletedIds.has(personId)));
+    setPendingDeleteIds([]);
+  };
   const addGroup = (name: string) => {
     const clean = name.trim();
     if (!clean || groups.some((group) => group.name.toLowerCase() === clean.toLowerCase())) return groups.find((group) => group.name.toLowerCase() === clean.toLowerCase())?.id ?? "";
@@ -1896,7 +1911,8 @@ function RosterDialog({ data, onClose, onSave }: { data: EventState; onClose: ()
     setPeople((current) => [...current, ...imported.filter((person) => !current.some((existing) => Boolean(existing.email) && existing.email.toLowerCase() === person.email.toLowerCase() || existing.name.toLowerCase() === person.name.toLowerCase()))]);
     setImportText("");
   };
-  return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog roster-dialog" role="dialog" aria-modal="true" aria-label="Manage universal roster"><header><div><span className="kicker">Organization settings</span><h2>Universal exec roster</h2><p>Names, contact details, and teams are shared across events. Event availability and assignments stay event-specific.</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="roster-body"><section className="roster-import"><label>Import exec list<textarea rows={4} value={importText} onChange={(event) => setImportText(event.target.value)} placeholder={`Name, phone, email, team\nAlex Chen, 604-555-0100, alex@example.com, Development`} /></label><button className="button secondary" disabled={!importText.trim()} onClick={importRoster}>Add imported execs</button></section><section><div className="form-section-head"><div><h3>Teams</h3><p>Each exec belongs to one organization-wide team.</p></div><div className="inline-field"><input value={newGroup} onChange={(event) => setNewGroup(event.target.value)} placeholder="New team" /><button onClick={() => { addGroup(newGroup); setNewGroup(""); }}>Add</button></div></div><div className="group-chip-list">{groups.map((group) => <span style={{ background: group.color }} key={group.id}>{group.name}</span>)}</div></section><section><div className="form-section-head"><div><h3>{people.length} execs</h3><p>Edit shared details or assign a team. Existing event assignments are never removed here.</p></div><button onClick={addPerson}>+ Add exec</button></div><div className="roster-list">{people.map((person) => <article key={person.id}><PersonAvatar person={person} /><div className="roster-fields"><input value={person.name} aria-label="Name" onChange={(event) => updatePerson(person.id, { name: event.target.value, initials: initialsFor(event.target.value) })} /><input value={person.phone} aria-label="Phone" placeholder="Phone" onChange={(event) => updatePerson(person.id, { phone: event.target.value })} /><input value={person.email} aria-label="Email" placeholder="Email" onChange={(event) => updatePerson(person.id, { email: event.target.value })} /></div><label className="person-team"><span>Team</span><select value={person.groupIds[0] ?? ""} onChange={(event) => updatePerson(person.id, { groupIds: event.target.value ? [event.target.value] : [] })}><option value="">Unassigned</option>{groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label></article>)}</div></section></div><footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!people.some((person) => person.name.trim())} onClick={() => onSave(people.filter((person) => person.name.trim()), groups)}>Save universal roster</button></footer></section></div>;
+  const allSelected = people.length > 0 && selectedIds.length === people.length;
+  return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget && !pendingDeleteIds.length) onClose(); }}><section className="setup-dialog roster-dialog" role="dialog" aria-modal="true" aria-label="Manage universal roster"><header><div><span className="kicker">Organization settings</span><h2>Universal exec roster</h2><p>Names, contact details, and teams are shared across events. Deleting an exec also removes their event assignments.</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="roster-body"><section className="roster-import"><label>Import exec list<textarea rows={4} value={importText} onChange={(event) => setImportText(event.target.value)} placeholder={`Name, phone, email, team\nAlex Chen, 604-555-0100, alex@example.com, Development`} /></label><button className="button secondary" disabled={!importText.trim()} onClick={importRoster}>Add imported execs</button></section><section><div className="form-section-head"><div><h3>Teams</h3><p>Each exec belongs to one organization-wide team.</p></div><div className="inline-field"><input value={newGroup} onChange={(event) => setNewGroup(event.target.value)} placeholder="New team" /><button onClick={() => { addGroup(newGroup); setNewGroup(""); }}>Add</button></div></div><div className="group-chip-list">{groups.map((group) => <span style={{ background: group.color }} key={group.id}>{group.name}</span>)}</div></section><section><div className="form-section-head"><div><h3>{people.length} execs</h3><p>Edit shared details, delete one exec, or select several for bulk deletion.</p></div><button onClick={addPerson}>+ Add exec</button></div><div className="roster-list-toolbar"><label><input type="checkbox" checked={allSelected} onChange={() => setSelectedIds(allSelected ? [] : people.map((person) => person.id))} />Select all</label><span>{selectedIds.length ? `${selectedIds.length} selected` : "Select execs to make changes in bulk"}</span><button className="button danger" disabled={!selectedIds.length} onClick={() => setPendingDeleteIds(selectedIds)}>Delete selected{selectedIds.length ? ` (${selectedIds.length})` : ""}</button></div><div className="roster-list">{people.map((person) => <article key={person.id}><input className="roster-select" type="checkbox" checked={selectedIds.includes(person.id)} onChange={() => toggleSelected(person.id)} aria-label={`Select ${person.name}`} /><PersonAvatar person={person} /><div className="roster-fields"><input value={person.name} aria-label="Name" onChange={(event) => updatePerson(person.id, { name: event.target.value, initials: initialsFor(event.target.value) })} /><input value={person.phone} aria-label="Phone" placeholder="Phone" onChange={(event) => updatePerson(person.id, { phone: event.target.value })} /><input value={person.email} aria-label="Email" placeholder="Email" onChange={(event) => updatePerson(person.id, { email: event.target.value })} /></div><label className="person-team"><span>Team</span><select value={person.groupIds[0] ?? ""} onChange={(event) => updatePerson(person.id, { groupIds: event.target.value ? [event.target.value] : [] })}><option value="">Unassigned</option>{groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label><button className="roster-delete" onClick={() => setPendingDeleteIds([person.id])} aria-label={`Delete ${person.name}`} title={`Delete ${person.name}`}>×</button></article>)}</div></section></div><footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!people.some((person) => person.name.trim())} onClick={() => onSave(people.filter((person) => person.name.trim()), groups)}>Save universal roster</button></footer>{pendingDeleteIds.length ? <div className="roster-delete-confirmation" role="alertdialog" aria-modal="true" aria-labelledby="roster-delete-title"><div><span className="kicker">Permanent roster change</span><h3 id="roster-delete-title">Delete {pendingDeleteIds.length} exec{pendingDeleteIds.length === 1 ? "" : "s"}?</h3><p>This removes {pendingDeleteIds.length === 1 ? "this exec" : "these execs"} from the universal roster and removes their assignments from every event when you save.</p><div><button className="button secondary" onClick={() => setPendingDeleteIds([])}>Keep {pendingDeleteIds.length === 1 ? "exec" : "execs"}</button><button className="button danger" onClick={confirmRosterDelete}>Delete {pendingDeleteIds.length === 1 ? "exec" : `${pendingDeleteIds.length} execs`}</button></div></div></div> : null}</section></div>;
 }
 
 function RoleTemplateDialog({ roleLibrary, templateId, onClose, onSave, onDelete, onMerge, onOpenExisting }: { roleLibrary: RoleTemplate[]; templateId?: string; onClose: () => void; onSave: (template: RoleTemplate) => void | Promise<void>; onDelete: (templateId: string) => void; onMerge: (sourceId: string, targetId: string) => void | Promise<void>; onOpenExisting: (templateId: string) => void }) {
@@ -1929,11 +1945,11 @@ function RoleImportDialog({ roleTemplates, onClose, onImport }: { roleTemplates:
   return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog role-import-dialog" role="dialog" aria-modal="true" aria-label="Import master role library"><header><div><span className="kicker">Master role library</span><h2>Import reusable roles</h2><p>Upload the Relay CSV template. Existing role names update in place; new names create master roles.</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="setup-form"><button type="button" className="button secondary import-template-button" onClick={downloadTemplate}>Download CSV template</button><label className="role-import-file">Choose completed CSV<input type="file" accept=".csv,text/csv" onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; setFileName(file.name); void file.text().then((source) => setRows(parseRoleImportCsv(source))); }} /><small>{fileName || "Required columns: Role name and Description of responsibilities. Colour is optional."}</small></label>{rows.length ? <div className="role-import-preview"><header><strong>{valid.length} ready</strong><span>{valid.length - existingCount} new · {existingCount} updates · {rows.length - valid.length} invalid</span></header>{rows.slice(0, 12).map((row) => <div className={row.error ? "invalid" : ""} key={`${row.row}-${row.name}`}><span>{row.row}</span><strong>{row.name || "Missing role name"}</strong><small>{row.error || (roleTemplates.some((role) => (role.normalizedName || normalizeRoleName(role.name)) === normalizeRoleName(row.name)) ? "Update existing" : "Create")}</small></div>)}</div> : null}</div><footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!valid.length} onClick={() => void onImport(rows)}>Import {valid.length || ""} role{valid.length === 1 ? "" : "s"}</button></footer></section></div>;
 }
 
-function SettingsView({ data, onSave, onManageRoster, onOpenPrep, onOpenJudging }: { data: EventState; onSave: (eventType: string, judgingEnabled: boolean) => void; onManageRoster: () => void; onOpenPrep: () => void; onOpenJudging: () => void }) {
-  const [eventType, setEventType] = useState(data.eventType);
+function SettingsView({ data, onSave, onManageRoster }: { data: EventState; onSave: (prepEnabled: boolean, judgingEnabled: boolean) => void; onManageRoster: () => void }) {
+  const [prepEnabled, setPrepEnabled] = useState(data.prepEnabled);
   const [judgingEnabled, setJudgingEnabled] = useState(data.judgingEnabled);
-  const dirty = eventType !== data.eventType || judgingEnabled !== data.judgingEnabled;
-  return <div className="content settings-view"><div className="section-title compact"><div><span className="kicker">Workspace settings</span><h2>Settings and modules</h2><p>Manage the organization-wide exec roster and keep event-specific tools together.</p></div>{dirty ? <button className="button primary" onClick={() => onSave(eventType, judgingEnabled)}>Save settings</button> : null}</div><div className="settings-grid"><section className="settings-panel roster-settings"><header><span aria-hidden="true">◎</span><div><h3>Universal event roster</h3><p>One exec roster and team structure shared across every event.</p></div></header><div className="settings-stat"><strong>{data.people.length}</strong><span>execs</span><strong>{data.groups.length}</strong><span>teams</span></div><button className="button primary" onClick={onManageRoster}>Manage universal roster</button></section><section className="settings-panel"><header><span aria-hidden="true">◇</span><div><h3>Event basics</h3><p>Settings that only apply to {data.eventName}.</p></div></header><label className="settings-field">Event type<select value={eventType} onChange={(event) => { const nextType = event.target.value; setEventType(nextType); if (nextType === "Competition") setJudgingEnabled(true); }}><option>Conference</option><option>Competition</option><option>Workshop</option><option>Social</option><option>Other</option></select></label></section></div><section className="settings-modules"><div className="subhead"><div><span className="kicker">Event modules</span><h3>Planning tools</h3><p>Open specialized workspaces only when this event needs them.</p></div></div><div className="module-card-grid"><article className="module-card"><div className="module-icon">✓</div><div><span>Planning module</span><h3>Prep</h3><p>Sessions, tasks, owners, and prep availability.</p></div><button className="button secondary" onClick={onOpenPrep}>Open prep →</button></article><article className={`module-card ${judgingEnabled ? "enabled" : ""}`}><div className="module-icon">#</div><div><span>Competition module</span><h3>Judging rooms</h3><p>Live room status, teams, judges, and staff.</p></div><label className="module-switch"><input type="checkbox" checked={judgingEnabled} onChange={(event) => setJudgingEnabled(event.target.checked)} /><span>{judgingEnabled ? "Enabled" : "Disabled"}</span></label>{judgingEnabled ? <button className="button secondary" onClick={onOpenJudging}>Open judging rooms →</button> : null}</article></div></section></div>;
+  const dirty = prepEnabled !== data.prepEnabled || judgingEnabled !== data.judgingEnabled;
+  return <div className="content settings-view"><div className="section-title compact"><div><span className="kicker">Workspace settings</span><h2>Settings and modules</h2><p>Manage the organization-wide exec roster and choose which event tools appear in the left panel.</p></div>{dirty ? <button className="button primary" onClick={() => onSave(prepEnabled, judgingEnabled)}>Save settings</button> : null}</div><div className="settings-grid"><section className="settings-panel roster-settings"><header><span aria-hidden="true">◎</span><div><h3>Universal event roster</h3><p>One exec roster and team structure shared across every event.</p></div></header><div className="settings-stat"><strong>{data.people.length}</strong><span>execs</span><strong>{data.groups.length}</strong><span>teams</span></div><button className="button primary" onClick={onManageRoster}>Manage universal roster</button></section></div><section className="settings-modules"><div className="subhead"><div><span className="kicker">Event modules</span><h3>Left-panel tools</h3><p>Enabled modules appear alongside Schedule, People, Roles, and Event overview.</p></div></div><div className="module-card-grid"><article className={`module-card ${prepEnabled ? "enabled" : ""}`}><div className="module-icon">✓</div><div><span>Planning module</span><h3>Prep</h3><p>Sessions, tasks, owners, and prep availability.</p></div><label className="module-switch"><input type="checkbox" checked={prepEnabled} onChange={(event) => setPrepEnabled(event.target.checked)} /><span>{prepEnabled ? "Shown in left panel" : "Hidden from left panel"}</span></label></article><article className={`module-card ${judgingEnabled ? "enabled" : ""}`}><div className="module-icon">#</div><div><span>Competition module</span><h3>Judging rooms</h3><p>Live room status, teams, judges, and staff.</p></div><label className="module-switch"><input type="checkbox" checked={judgingEnabled} onChange={(event) => setJudgingEnabled(event.target.checked)} /><span>{judgingEnabled ? "Shown in left panel" : "Hidden from left panel"}</span></label></article></div></section></div>;
 }
 
 function BlockEditor({ day, blockId, onClose, onSave }: { day: EventDay; blockId?: string; onClose: () => void; onSave: (block: EventBlock) => void }) {
