@@ -20,6 +20,13 @@ import { moveRoleOptionIndex, nextRoleColor, roleColor } from "./role-presentati
 
 type Section = "schedule" | "prep" | "people" | "roles" | "judging" | "resources";
 const WORKSPACE_MODE_KEY = "relay:v1:workspace-mode";
+
+function setExecViewUrl(active: boolean) {
+  const url = new URL(window.location.href);
+  if (active) url.searchParams.set("view", "exec");
+  else url.searchParams.delete("view");
+  window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+}
 type RelayMeta = { shareToken: string | null; updatedAt: string | null; updatedBy: string | null; publishedAt: string | null; publishedBy: string | null };
 
 type BlockLink = { id: string; label: string; url: string };
@@ -556,6 +563,7 @@ export function RelayWorkspace({ portalUser }: { portalUser: { name: string; ema
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const initialPersonId = params.get("person");
+    const restoreExecView = params.get("view") === "exec" || window.localStorage.getItem(WORKSPACE_MODE_KEY) === "exec";
     Promise.all([
       fetch("/api/event-state").then(async (response) => {
         const payload = await response.json().catch(() => ({}));
@@ -580,14 +588,17 @@ export function RelayWorkspace({ portalUser }: { portalUser: { name: string; ema
           if (rememberedPersonId && initial.people.some((person: Person) => person.id === rememberedPersonId)) setExecPersonId(rememberedPersonId);
           setBoardLocked(window.localStorage.getItem(`relay:v1:board-locked:${initial.eventId}`) === "true");
           setSelectedRoles({});
-          if (window.localStorage.getItem(WORKSPACE_MODE_KEY) === "exec") {
+          if (restoreExecView) {
             try {
               const published = await fetchPublishedEvent(initial.eventId);
               setPublishedData(published);
               setDayId(published.days[0]?.id ?? initial.days[0].id);
               setMode("exec");
+              window.localStorage.setItem(WORKSPACE_MODE_KEY, "exec");
+              setExecViewUrl(true);
             } catch (error) {
               window.localStorage.removeItem(WORKSPACE_MODE_KEY);
+              setExecViewUrl(false);
               showError(error instanceof Error ? error.message : "Unable to restore Exec View.");
             }
           }
@@ -955,9 +966,11 @@ export function RelayWorkspace({ portalUser }: { portalUser: { name: string; ema
       setDayId(published.days[0]?.id ?? dayId);
       setMode("exec");
       window.localStorage.setItem(WORKSPACE_MODE_KEY, "exec");
+      setExecViewUrl(true);
     } catch (error) {
       setMode("director");
       window.localStorage.removeItem(WORKSPACE_MODE_KEY);
+      setExecViewUrl(false);
       showError(error instanceof Error ? error.message : "Unable to load the published schedule.");
     } finally {
       setLoadingPublished(false);
@@ -966,6 +979,7 @@ export function RelayWorkspace({ portalUser }: { portalUser: { name: string; ema
 
   const exitExecView = () => {
     window.localStorage.removeItem(WORKSPACE_MODE_KEY);
+    setExecViewUrl(false);
     setMode("director");
   };
 

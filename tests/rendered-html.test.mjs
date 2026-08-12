@@ -22,6 +22,8 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.match(workspace, /WORKSPACE_MODE_KEY/);
   assert.match(workspace, /localStorage\.setItem\(WORKSPACE_MODE_KEY, "exec"\)/);
   assert.match(workspace, /localStorage\.removeItem\(WORKSPACE_MODE_KEY\)/);
+  assert.match(workspace, /searchParams\.set\("view", "exec"\)/);
+  assert.match(workspace, /searchParams\.delete\("view"\)/);
   assert.match(workspace, /Viewing published roles for/);
   assert.match(workspace, /mapped automatically to the current schedule blocks/);
   assert.match(workspace, /Preferences and private notes/);
