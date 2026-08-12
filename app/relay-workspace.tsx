@@ -21,10 +21,12 @@ import { moveRoleOptionIndex, nextRoleColor, roleColor } from "./role-presentati
 type Section = "schedule" | "prep" | "people" | "roles" | "judging" | "resources";
 const WORKSPACE_MODE_KEY = "relay:v1:workspace-mode";
 
-function setExecViewUrl(active: boolean) {
+function setExecViewUrl(active: boolean, eventId?: string) {
   const url = new URL(window.location.href);
-  if (active) url.searchParams.set("view", "exec");
-  else url.searchParams.delete("view");
+  if (active) {
+    url.searchParams.set("view", "exec");
+    if (eventId) url.searchParams.set("event", eventId);
+  } else url.searchParams.delete("view");
   window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
 }
 type RelayMeta = { shareToken: string | null; updatedAt: string | null; updatedBy: string | null; publishedAt: string | null; publishedBy: string | null };
@@ -514,8 +516,9 @@ function PersonAvatar({ person, small = false }: { person: Person; small?: boole
   return <span className={`avatar ${small ? "avatar-small" : ""}`} style={{ background: person.color }}>{person.initials}</span>;
 }
 
-async function fetchPublishedEvent(eventId: string) {
-  const response = await fetch(`/api/event-state/published?event=${encodeURIComponent(eventId)}`);
+async function fetchPublishedEvent(eventId?: string) {
+  const query = eventId ? `?event=${encodeURIComponent(eventId)}` : "";
+  const response = await fetch(`/api/event-state/published${query}`);
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error ?? "Unable to load the published schedule.");
   return normalizeEvent(payload.state as EventState);
@@ -563,7 +566,30 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const initialPersonId = params.get("person");
+    const requestedEventId = params.get("event") ?? undefined;
     const restoreExecView = params.get("view") === "exec" || window.localStorage.getItem(WORKSPACE_MODE_KEY) === "exec";
+
+    if (restoreExecView) {
+      void fetchPublishedEvent(requestedEventId)
+        .then((published) => {
+          setPublishedData(published);
+          setDayId(published.days[0]?.id ?? "day1");
+          const rememberedPersonId = initialPersonId ?? window.localStorage.getItem(`relay:v1:exec-person:${published.eventId}`);
+          if (rememberedPersonId && published.people.some((person: Person) => person.id === rememberedPersonId)) {
+            setExecPersonId(rememberedPersonId);
+          }
+          setMode("exec");
+          window.localStorage.setItem(WORKSPACE_MODE_KEY, "exec");
+          setExecViewUrl(true, published.eventId);
+        })
+        .catch((error) => {
+          window.localStorage.removeItem(WORKSPACE_MODE_KEY);
+          setExecViewUrl(false);
+          setMode("director");
+          showError(error instanceof Error ? error.message : "Unable to restore Exec View.");
+        });
+    }
+
     Promise.all([
       fetch("/api/event-state").then(async (response) => {
         const payload = await response.json().catch(() => ({}));
@@ -572,36 +598,23 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
       }),
       fetch("/api/role-library").then((response) => response.ok ? response.json() : { roles: [] }),
     ])
-      .then(async ([payload, rolePayload]) => {
+      .then(([payload, rolePayload]) => {
         const states = (payload.states ?? (payload.state ? [payload.state] : [])).map((state: EventState) => normalizeEvent(state));
         const remoteRoles = (rolePayload.roles ?? []) as RoleTemplate[];
         if (states.length) {
-          const requestedEventId = new URLSearchParams(window.location.search).get("event");
           const initial = states.find((state: EventState) => state.eventId === requestedEventId) ?? states[0];
           const mergedRoles = new Map<string, RoleTemplate>();
           for (const role of [...builtInRoleTemplates, ...initial.roleLibrary, ...remoteRoles]) mergedRoles.set(role.id, role);
           setRoleTemplates(Array.from(mergedRoles.values()).sort((a, b) => a.name.localeCompare(b.name)));
           setEventLibrary(states);
           setData(initial);
-          setDayId(initial.days[0].id);
-          const rememberedPersonId = initialPersonId ?? window.localStorage.getItem(`relay:v1:exec-person:${initial.eventId}`);
-          if (rememberedPersonId && initial.people.some((person: Person) => person.id === rememberedPersonId)) setExecPersonId(rememberedPersonId);
+          if (!restoreExecView) {
+            setDayId(initial.days[0].id);
+            const rememberedPersonId = initialPersonId ?? window.localStorage.getItem(`relay:v1:exec-person:${initial.eventId}`);
+            if (rememberedPersonId && initial.people.some((person: Person) => person.id === rememberedPersonId)) setExecPersonId(rememberedPersonId);
+          }
           setBoardLocked(window.localStorage.getItem(`relay:v1:board-locked:${initial.eventId}`) === "true");
           setSelectedRoles({});
-          if (restoreExecView) {
-            try {
-              const published = await fetchPublishedEvent(initial.eventId);
-              setPublishedData(published);
-              setDayId(published.days[0]?.id ?? initial.days[0].id);
-              setMode("exec");
-              window.localStorage.setItem(WORKSPACE_MODE_KEY, "exec");
-              setExecViewUrl(true);
-            } catch (error) {
-              window.localStorage.removeItem(WORKSPACE_MODE_KEY);
-              setExecViewUrl(false);
-              showError(error instanceof Error ? error.message : "Unable to restore Exec View.");
-            }
-          }
         }
       })
       .catch((error) => {
@@ -966,7 +979,7 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
       setDayId(published.days[0]?.id ?? dayId);
       setMode("exec");
       window.localStorage.setItem(WORKSPACE_MODE_KEY, "exec");
-      setExecViewUrl(true);
+      setExecViewUrl(true, published.eventId);
     } catch (error) {
       setMode("director");
       window.localStorage.removeItem(WORKSPACE_MODE_KEY);
@@ -1192,7 +1205,7 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
   ];
 
   if (mode === "exec" && !publishedData) {
-    return <main className="exec-loading"><div className="exec-brand"><span>R</span> relay</div><span className="exec-loading-mark" aria-hidden="true" /><strong>Loading Exec View</strong></main>;
+    return <main className="exec-loading" aria-busy="true"><header><div className="exec-brand"><span>R</span> relay</div><div className="exec-loading-profile"><i /><span /></div></header><section className="exec-loading-body" role="status" aria-label="Loading Exec View"><div className="exec-loading-kicker" /><div className="exec-loading-title" /><div className="exec-loading-subtitle" /><div className="exec-loading-days"><i /><i /></div><div className="exec-loading-section"><div /><span /></div><div className="exec-loading-roles">{[0, 1, 2, 3].map((item) => <article key={item}><time /><i /><div><span /><strong /><small /></div></article>)}</div><p>Preparing your published roles<span>…</span></p></section></main>;
   }
 
   return (

@@ -26,6 +26,8 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.match(workspace, /searchParams\.set\("view", "exec"\)/);
   assert.match(workspace, /searchParams\.delete\("view"\)/);
   assert.match(workspace, /Loading Exec View/);
+  assert.match(workspace, /void fetchPublishedEvent\(requestedEventId\)/);
+  assert.match(workspace, /setExecViewUrl\(true, published\.eventId\)/);
   assert.match(workspace, /Viewing published roles for/);
   assert.match(workspace, /mapped automatically to the current schedule blocks/);
   assert.match(workspace, /Preferences and private notes/);

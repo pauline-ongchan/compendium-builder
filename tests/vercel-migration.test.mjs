@@ -15,6 +15,7 @@ test("uses native Next.js with lazy Neon persistence", async () => {
   assert.doesNotMatch(packageJson, /vinext|wrangler|@cloudflare\/vite-plugin/);
   assert.match(database, /drizzle-orm\/neon-http/);
   assert.match(database, /process\.env\.DATABASE_URL/);
+  assert.match(database, /databaseSetup = initializeDb\(\)/);
   assert.doesNotMatch(database, /cloudflare:workers|drizzle-orm\/d1/);
   assert.match(schema, /drizzle-orm\/pg-core/);
   assert.match(environment, /^DATABASE_URL=/m);

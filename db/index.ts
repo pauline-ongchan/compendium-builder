@@ -15,13 +15,14 @@ function createDb() {
 }
 
 let database: ReturnType<typeof createDb> | null = null;
+let databaseSetup: Promise<void> | null = null;
 
 export function getDb() {
   database ??= createDb();
   return database;
 }
 
-export async function ensureDb() {
+async function initializeDb() {
   const db = getDb();
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS event_states (
@@ -55,4 +56,14 @@ export async function ensureDb() {
     WHERE published_payload IS NULL
       AND LOWER(COALESCE(payload::jsonb ->> 'publishedAt', '')) NOT IN ('', 'not published')
   `);
+}
+
+export function ensureDb() {
+  if (!databaseSetup) {
+    databaseSetup = initializeDb().catch((error) => {
+      databaseSetup = null;
+      throw error;
+    });
+  }
+  return databaseSetup;
 }
