@@ -30,6 +30,18 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.match(workspace, /void fetchPublishedEvent\(requestedEventId\)/);
   assert.match(workspace, /setExecViewUrl\(true, published\.eventId\)/);
   assert.match(workspace, /Viewing published roles for/);
+  assert.match(workspace, /execDayStorageKey/);
+  assert.match(workspace, /localStorage\.setItem\(execDayStorageKey\(data\.eventId\), id\)/);
+  assert.match(workspace, /Event schedule/);
+  assert.match(workspace, /Event overview/);
+  assert.match(workspace, /aria-label=\"Exec view\"/);
+  assert.match(workspace, /Times in \{timeZone\}/);
+  assert.match(workspace, /candidate\.personId !== person\.id/);
+  assert.match(workspace, /exec-person-icon/);
+  assert.match(workspace, /visiblePersonTooltip/);
+  assert.match(workspace, /role="tooltip"/);
+  assert.match(workspace, /className="next-block-label">\{block\.label\}/);
+  assert.match(workspace, /<h2>\{assignment\.role\}<\/h2>/);
   assert.match(workspace, /mapped automatically to the current schedule blocks/);
   assert.match(workspace, /Preferences and private notes/);
   assert.match(workspace, /Role library/);
