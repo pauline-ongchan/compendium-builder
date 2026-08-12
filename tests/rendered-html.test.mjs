@@ -15,7 +15,8 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
 
   assert.match(adminPage, /RelayWorkspace/);
   assert.match(adminPage, /initialMode=\{view === "exec" \? "exec" : "director"\}/);
-  assert.match(page, /Event operations, in sync/);
+  assert.match(page, /redirect\("\/admin\/sign-in"\)/);
+  assert.doesNotMatch(page, /Open Relay portal/);
   assert.match(layout, /Relay — Event operations, in sync/);
   assert.match(workspace, /Import from Google Docs/);
   assert.match(workspace, /Exec roster and teams/);
