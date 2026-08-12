@@ -41,13 +41,9 @@ button { color: inherit; }
 .sidebar nav button.active { color: var(--ink); background: var(--acid); font-weight: 700; }
 .sidebar nav button.active > span { color: #55601e; }
 .sidebar-bottom { margin-top: auto; padding-top: 16px; border-top: 1px solid #35413f; }
-.sidebar-bottom > button { width: 100%; padding: 8px; color: inherit; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 9px; text-align: left; border: 0; background: transparent; cursor: pointer; border-radius: 9px; }
+.sidebar-bottom > button { width: 100%; padding: 8px 4px; color: #bac3c0; display: flex; align-items: center; gap: 9px; text-align: left; border: 0; background: transparent; cursor: pointer; font-size: 12px; font-weight: 650; }
 .sidebar-bottom > button:hover { background: #202f2c; }
-.sidebar-bottom > button.active { background: var(--acid); color: var(--ink); }
-.sidebar-bottom > button.active small { color: #55601e; }
-.sidebar-bottom strong, .sidebar-bottom small { display: block; }
-.sidebar-bottom strong { font-size: 12px; }
-.sidebar-bottom small { font-size: 10px; color: #9eaaa6; margin-top: 2px; }
+.sidebar-bottom > button.active { background: transparent; color: white; font-weight: 800; }
 .sidebar-collapse { position: absolute; top: 27px; right: -13px; width: 27px; height: 27px; border: 1px solid #4d5a56; border-radius: 50%; background: #f4f1e8; color: var(--ink); display: grid; place-items: center; cursor: pointer; font-size: 18px; line-height: 1; box-shadow: 0 2px 8px rgba(20,32,30,.18); }
 .sidebar-collapse:hover { background: var(--acid); }
 .workspace { min-height: 100vh; margin-left: 252px; transition: margin-left .18s ease; }
@@ -58,8 +54,8 @@ button { color: inherit; }
 .sidebar-collapsed .sidebar nav button { position: relative; grid-template-columns: 1fr; justify-items: center; padding: 0; font-size: 0; }
 .sidebar-collapsed .sidebar nav button > span { font-size: 10px; }
 .sidebar-collapsed .sidebar nav button b { position: absolute; top: -4px; right: -3px; }
-.sidebar-collapsed .sidebar-bottom > button { grid-template-columns: 1fr; justify-items: center; }
-.sidebar-collapsed .sidebar-bottom > button div, .sidebar-collapsed .sidebar-bottom > button > span:last-child { display: none; }
+.sidebar-collapsed .sidebar-bottom > button { justify-content: center; font-size: 0; }
+.sidebar-collapsed .sidebar-bottom > button span { font-size: 14px; }
 .sidebar-collapsed .workspace { margin-left: 72px; }
 .workspace-header { min-height: 106px; padding: 22px 34px; border-bottom: 1px solid var(--line); background: rgba(244,241,232,.92); display: flex; justify-content: space-between; align-items: center; gap: 24px; position: relative; z-index: 10; }
 .eyebrow, .kicker { color: #65726e; font-family: var(--font-geist-mono); font-size: 10px; line-height: 1.2; text-transform: uppercase; letter-spacing: .12em; font-weight: 700; }
@@ -882,8 +878,8 @@ button { color: inherit; }
   .sidebar nav button { grid-template-columns: 1fr; justify-items: center; padding: 0; font-size: 0; }
   .sidebar nav button > span { font-size: 10px; }
   .sidebar nav button b { position: absolute; margin-left: 31px; margin-top: -24px; }
-  .sidebar-bottom > button { grid-template-columns: 1fr; justify-items: center; }
-  .sidebar-bottom > button div, .sidebar-bottom > button > span:last-child { display: none; }
+  .sidebar-bottom > button { justify-content: center; font-size: 0; }
+  .sidebar-bottom > button span { font-size: 14px; }
   .workspace { margin-left: 68px; }
   .workspace-header { min-height: 82px; padding: 15px; }
   .workspace-header h1 { font-size: 19px; }

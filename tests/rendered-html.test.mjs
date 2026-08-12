@@ -32,7 +32,9 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.match(workspace, /Viewing published roles for/);
   assert.match(workspace, /maps automatically to schedule blocks/);
   assert.doesNotMatch(workspace, /Preferences and private notes/);
-  assert.match(workspace, /Roster \+ modules/);
+  assert.doesNotMatch(workspace, /Roster \+ modules/);
+  assert.match(workspace, /<span aria-hidden="true">⚙<\/span>Settings<\/button>/);
+  assert.doesNotMatch(workspace, /<span aria-hidden="true">→<\/span>/);
   assert.doesNotMatch(workspace, />\+ New event<\/button>/);
   assert.doesNotMatch(workspace, /Load standard template/);
   assert.match(workspace, /\+ Add new category/);

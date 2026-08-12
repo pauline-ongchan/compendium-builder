@@ -1443,7 +1443,7 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
                 <button key={id} className={section === id ? "active" : ""} onClick={() => setSection(id)}><span>{number}</span>{label}{id === "schedule" && warnings.length > 0 ? <b>{warnings.length}</b> : null}</button>
               ))}
             </nav>
-            <div className="sidebar-bottom"><button className={section === "settings" ? "active" : ""} onClick={() => setSection("settings")}><span aria-hidden="true">⚙</span><div><strong>Settings</strong><small>Roster + modules</small></div><span aria-hidden="true">→</span></button></div>
+            <div className="sidebar-bottom"><button className={section === "settings" ? "active" : ""} onClick={() => setSection("settings")}><span aria-hidden="true">⚙</span>Settings</button></div>
           </aside>
           <main className="workspace">
             <header className="workspace-header">
