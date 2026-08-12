@@ -300,6 +300,8 @@ button { color: inherit; }
 .availability-person strong { font-size: 11px; }
 .availability-person small { font-size: 8px; color: var(--muted); }
 .availability-block { border: 0; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); display: grid; place-items: center; font-weight: 800; }
+.availability-card button.availability-block { cursor: pointer; }
+.availability-card button.availability-block:focus-visible { outline: 3px solid var(--ink); outline-offset: -3px; }
 .availability-block.available { background: #8fd0a6; color: #235d3c; }
 .availability-block.conditional { background: #f0cc75; color: #6b4b0e; }
 .availability-block.unavailable { background: #ee938a; color: #79271f; }

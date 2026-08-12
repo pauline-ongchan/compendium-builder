@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
-import { requireAdminApi } from "../../../auth";
+import { requirePortalApi } from "../../../auth";
 import { mapTimeAvailabilityToBlocks, type AvailabilityState } from "../../availability";
 import { ensureDb, getDb } from "../../../db";
 import { eventStates } from "../../../db/schema";
@@ -36,7 +36,7 @@ function withMetadata(payload: Record<string, unknown>, record: typeof eventStat
 }
 
 export async function GET() {
-  const authorization = await requireAdminApi();
+  const authorization = await requirePortalApi();
   if ("response" in authorization) return authorization.response;
 
   try {
@@ -59,7 +59,7 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
-  const authorization = await requireAdminApi();
+  const authorization = await requirePortalApi();
   if ("response" in authorization) return authorization.response;
 
   try {

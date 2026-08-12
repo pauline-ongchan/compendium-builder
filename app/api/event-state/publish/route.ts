@@ -1,12 +1,12 @@
 import { eq } from "drizzle-orm";
-import { requireAdminApi } from "../../../../auth";
+import { requirePortalApi } from "../../../../auth";
 import { ensureDb, getDb } from "../../../../db";
 import { eventStates } from "../../../../db/schema";
 import { mapTimeAvailabilityToBlocks, type AvailabilityState } from "../../../availability";
 import { createShareToken } from "../route";
 
 export async function POST(request: Request) {
-  const authorization = await requireAdminApi();
+  const authorization = await requirePortalApi();
   if ("response" in authorization) return authorization.response;
 
   try {

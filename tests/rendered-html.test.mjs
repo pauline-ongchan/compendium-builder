@@ -18,8 +18,9 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.match(layout, /Relay — Event operations, in sync/);
   assert.match(workspace, /Import from Google Docs/);
   assert.match(workspace, /Exec roster and teams/);
-  assert.match(workspace, /Share availability/);
-  assert.match(workspace, /When are you free/);
+  assert.match(workspace, /Click to change/);
+  assert.match(workspace, /Published exec view/);
+  assert.match(workspace, /Viewing published roles for/);
   assert.match(workspace, /mapped automatically to the current schedule blocks/);
   assert.match(workspace, /Preferences and private notes/);
   assert.match(workspace, /Role library/);
@@ -41,7 +42,8 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.match(workspace, /aria-describedby=\{dayCount\.error/);
   assert.doesNotMatch(workspace, /setDayCount\(Math\.max/);
   assert.doesNotMatch(workspace, /Build the flow, keep the judgment/);
-  assert.match(workspace, /Preview as exec/);
+  assert.match(workspace, /Exec view/);
+  assert.doesNotMatch(workspace, /When are you free/);
   assert.match(workspace, /Collapse navigation/);
   assert.match(workspace, /data\.draftChanges.*ahead/);
   assert.match(workspace, /Unlocked/);

@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { applyUpdate, isUpdate, publicState } from "../app/public-event-state.ts";
-import { isApprovedAdminEmail } from "../app/admin-access.ts";
+import { isAllowedPortalEmail } from "../app/admin-access.ts";
 
 function eventPayload() {
   return JSON.stringify({
@@ -27,12 +27,13 @@ function eventPayload() {
   });
 }
 
-test("administrator allowlist uses normalized exact email matches", () => {
-  const previous = process.env.RELAY_ADMIN_EMAILS;
-  process.env.RELAY_ADMIN_EMAILS = " Director@Example.com,helper@example.com ";
-  assert.equal(isApprovedAdminEmail("director@example.com"), true);
-  assert.equal(isApprovedAdminEmail("other@example.com"), false);
-  process.env.RELAY_ADMIN_EMAILS = previous;
+test("portal access accepts only normalized emails in the configured domain", () => {
+  const previous = process.env.RELAY_GOOGLE_DOMAIN;
+  process.env.RELAY_GOOGLE_DOMAIN = " BizTech.Example ";
+  assert.equal(isAllowedPortalEmail("director@biztech.example"), true);
+  assert.equal(isAllowedPortalEmail("director@other.example"), false);
+  assert.equal(isAllowedPortalEmail("director@biztech.example.evil.com"), false);
+  process.env.RELAY_GOOGLE_DOMAIN = previous;
 });
 
 test("public event payload removes private roster fields", () => {
@@ -68,10 +69,11 @@ test("public updates reject stale roster, time, and prep identifiers", () => {
   assert.throws(() => applyUpdate(eventPayload(), { kind: "prepAvailability", personId: "person-1", sessionId: "missing", value: "available" }), /prep session/);
 });
 
-test("admin writes are guarded and publishing has a separate snapshot", async () => {
-  const [eventRoute, publishRoute, roleRoute, importRoute, schema, migration, environment] = await Promise.all([
+test("portal writes are guarded and exec view reads a separate published snapshot", async () => {
+  const [eventRoute, publishRoute, publishedRoute, roleRoute, importRoute, schema, migration, environment] = await Promise.all([
     readFile(new URL("../app/api/event-state/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/event-state/publish/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/event-state/published/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/role-library/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/google-doc-import/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
@@ -79,11 +81,12 @@ test("admin writes are guarded and publishing has a separate snapshot", async ()
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
   ]);
 
-  for (const route of [eventRoute, publishRoute, roleRoute, importRoute]) assert.match(route, /requireAdminApi/);
+  for (const route of [eventRoute, publishRoute, publishedRoute, roleRoute, importRoute]) assert.match(route, /requirePortalApi/);
   assert.match(schema, /publishedPayload: text\("published_payload"\)/);
   assert.match(schema, /shareToken: text\("share_token"\)\.unique\(\)/);
   assert.match(publishRoute, /publishedPayload: payload/);
+  assert.match(publishedRoute, /record\.publishedPayload/);
   assert.match(migration, /UPDATE "event_states"[\s\S]*"published_payload" = "payload"/);
   assert.match(environment, /^GOOGLE_CLIENT_ID=/m);
-  assert.match(environment, /^RELAY_ADMIN_EMAILS=/m);
+  assert.match(environment, /^RELAY_GOOGLE_DOMAIN=ubcbiztech\.com$/m);
 });

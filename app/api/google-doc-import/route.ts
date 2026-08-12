@@ -1,4 +1,4 @@
-import { requireAdminApi } from "../../../auth";
+import { requirePortalApi } from "../../../auth";
 
 function googleDocId(input: string) {
   try {
@@ -11,7 +11,7 @@ function googleDocId(input: string) {
 }
 
 export async function POST(request: Request) {
-  const authorization = await requireAdminApi();
+  const authorization = await requirePortalApi();
   if ("response" in authorization) return authorization.response;
   try {
     const body = await request.json();

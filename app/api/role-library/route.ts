@@ -1,10 +1,10 @@
 import { asc, eq } from "drizzle-orm";
-import { requireAdminApi } from "../../../auth";
+import { requirePortalApi } from "../../../auth";
 import { ensureDb, getDb } from "../../../db";
 import { roleTemplates } from "../../../db/schema";
 
 export async function GET() {
-  const authorization = await requireAdminApi();
+  const authorization = await requirePortalApi();
   if ("response" in authorization) return authorization.response;
   try {
     await ensureDb();
@@ -16,7 +16,7 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
-  const authorization = await requireAdminApi();
+  const authorization = await requirePortalApi();
   if ("response" in authorization) return authorization.response;
   try {
     const role = await request.json();
@@ -37,7 +37,7 @@ export async function PUT(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const authorization = await requireAdminApi();
+  const authorization = await requirePortalApi();
   if ("response" in authorization) return authorization.response;
   try {
     const id = new URL(request.url).searchParams.get("id");

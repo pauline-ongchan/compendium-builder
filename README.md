@@ -23,7 +23,7 @@ Copy `.env.example` to `.env.local` and set a Neon Postgres connection string:
 DATABASE_URL=postgresql://...
 ```
 
-Configure administrator authentication with a Google OAuth web application. Its
+Configure portal authentication with a Google OAuth web application. Its
 authorized callback URL is `http://localhost:3000/api/auth/callback/google` for
 local development and `https://<your-domain>/api/auth/callback/google` in the
 deployed environment.
@@ -33,13 +33,17 @@ NEXTAUTH_URL=http://localhost:3000
 NEXTAUTH_SECRET=<a long random secret>
 GOOGLE_CLIENT_ID=<google oauth client id>
 GOOGLE_CLIENT_SECRET=<google oauth client secret>
-RELAY_ADMIN_EMAILS=director@example.com,coordinator@example.com
+RELAY_GOOGLE_DOMAIN=ubcbiztech.com
 ```
 
-Only emails in `RELAY_ADMIN_EMAILS` can open `/admin` or call administrative
-APIs. Published exec views use unguessable `/exec/<share-token>` links and do
-not require sign-in. Exec links expose the published event and allow narrowly
-scoped availability updates, so share them only with the event team.
+`RELAY_GOOGLE_DOMAIN` defaults to `ubcbiztech.com` when omitted. The former
+`RELAY_ADMIN_EMAILS` variable is no longer used.
+
+Only verified Google accounts in `RELAY_GOOGLE_DOMAIN` can open the Relay portal
+or call its APIs. Everyone in the domain can edit the shared workspace. The Exec
+View is read-only, remembers the selected name on the current device, and shows
+only that person's roles from the last published schedule. Availability is
+updated in People + Availability inside the portal.
 
 Start the app:
 

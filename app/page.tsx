@@ -14,9 +14,9 @@ export default function Home() {
         <div className="access-brand"><span>R</span> relay</div>
         <span className="kicker">Event operations, in sync</span>
         <h1>One plan for the people making it happen.</h1>
-        <p>Exec schedules are shared through a private event link. Administrators can sign in to plan, publish, and manage access.</p>
-        <Link className="button primary access-action" href="/admin">Open admin workspace</Link>
-        <small>Looking for your exec schedule? Open the event link shared by your organizer.</small>
+        <p>BizTech members can plan the event together, update availability, and open a personalized view of the published schedule.</p>
+        <Link className="button primary access-action" href="/admin">Open Relay portal</Link>
+        <small>Sign in with your verified BizTech Google account.</small>
       </section>
     </main>
   );
