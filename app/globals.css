@@ -461,6 +461,10 @@ button { color: inherit; }
 .button.danger { background: transparent; border-color: #ca7167; color: #8a3028; }
 
 .exec-shell { background: #edf0e6; }
+.exec-loading { min-height: 100vh; background: #edf0e6; color: var(--ink); display: grid; place-content: center; justify-items: center; gap: 15px; }
+.exec-loading .exec-brand { margin-bottom: 18px; cursor: default; }
+.exec-loading-mark { width: 28px; height: 28px; border: 3px solid #c9cec1; border-top-color: var(--ink); border-radius: 50%; animation: spin .8s linear infinite; }
+.exec-loading strong { font-size: 11px; text-transform: uppercase; letter-spacing: .1em; }
 .exec-app { min-height: 100vh; background: #edf0e6; padding-bottom: 80px; }
 .exec-header { height: 72px; padding: 0 max(20px, calc((100vw - 1180px)/2)); background: #15211f; color: white; display: flex; align-items: center; justify-content: space-between; }
 .exec-header > div { display: flex; align-items: center; gap: 10px; }

@@ -521,12 +521,12 @@ async function fetchPublishedEvent(eventId: string) {
   return normalizeEvent(payload.state as EventState);
 }
 
-export function RelayWorkspace({ portalUser }: { portalUser: { name: string; email: string } }) {
+export function RelayWorkspace({ initialMode = "director", portalUser }: { initialMode?: "director" | "exec"; portalUser: { name: string; email: string } }) {
   const [data, setData] = useState<EventState>(() => normalizeEvent(seedData));
   const [publishedData, setPublishedData] = useState<EventState | null>(null);
   const [eventLibrary, setEventLibrary] = useState<EventState[]>(() => [normalizeEvent(seedData)]);
   const [hydrated, setHydrated] = useState(false);
-  const [mode, setMode] = useState<"director" | "exec">("director");
+  const [mode, setMode] = useState<"director" | "exec">(initialMode);
   const [section, setSection] = useState<Section>("schedule");
   const [dayId, setDayId] = useState("day2");
   const [roleTemplates, setRoleTemplates] = useState<RoleTemplate[]>(builtInRoleTemplates);
@@ -1190,6 +1190,10 @@ export function RelayWorkspace({ portalUser }: { portalUser: { name: string; ema
     ...(data.judgingEnabled ? [["judging", "Judging rooms", "06"]] as [Section, string, string][] : []),
     ["resources", "Event overview", data.judgingEnabled ? "07" : "06"],
   ];
+
+  if (mode === "exec" && !publishedData) {
+    return <main className="exec-loading"><div className="exec-brand"><span>R</span> relay</div><span className="exec-loading-mark" aria-hidden="true" /><strong>Loading Exec View</strong></main>;
+  }
 
   return (
     <div className={`app-shell ${mode === "exec" ? "exec-shell" : ""} ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>

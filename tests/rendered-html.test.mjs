@@ -14,6 +14,7 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   ]);
 
   assert.match(adminPage, /RelayWorkspace/);
+  assert.match(adminPage, /initialMode=\{view === "exec" \? "exec" : "director"\}/);
   assert.match(page, /Event operations, in sync/);
   assert.match(layout, /Relay — Event operations, in sync/);
   assert.match(workspace, /Import from Google Docs/);
@@ -24,6 +25,7 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.match(workspace, /localStorage\.removeItem\(WORKSPACE_MODE_KEY\)/);
   assert.match(workspace, /searchParams\.set\("view", "exec"\)/);
   assert.match(workspace, /searchParams\.delete\("view"\)/);
+  assert.match(workspace, /Loading Exec View/);
   assert.match(workspace, /Viewing published roles for/);
   assert.match(workspace, /mapped automatically to the current schedule blocks/);
   assert.match(workspace, /Preferences and private notes/);
