@@ -19,6 +19,7 @@ import { validateDayCount } from "./event-setup";
 import { moveRoleOptionIndex, nextRoleColor, roleColor } from "./role-presentation";
 
 type Section = "schedule" | "prep" | "people" | "roles" | "judging" | "resources";
+const WORKSPACE_MODE_KEY = "relay:v1:workspace-mode";
 type RelayMeta = { shareToken: string | null; updatedAt: string | null; updatedBy: string | null; publishedAt: string | null; publishedBy: string | null };
 
 type BlockLink = { id: string; label: string; url: string };
@@ -506,6 +507,13 @@ function PersonAvatar({ person, small = false }: { person: Person; small?: boole
   return <span className={`avatar ${small ? "avatar-small" : ""}`} style={{ background: person.color }}>{person.initials}</span>;
 }
 
+async function fetchPublishedEvent(eventId: string) {
+  const response = await fetch(`/api/event-state/published?event=${encodeURIComponent(eventId)}`);
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error ?? "Unable to load the published schedule.");
+  return normalizeEvent(payload.state as EventState);
+}
+
 export function RelayWorkspace({ portalUser }: { portalUser: { name: string; email: string } }) {
   const [data, setData] = useState<EventState>(() => normalizeEvent(seedData));
   const [publishedData, setPublishedData] = useState<EventState | null>(null);
@@ -556,7 +564,7 @@ export function RelayWorkspace({ portalUser }: { portalUser: { name: string; ema
       }),
       fetch("/api/role-library").then((response) => response.ok ? response.json() : { roles: [] }),
     ])
-      .then(([payload, rolePayload]) => {
+      .then(async ([payload, rolePayload]) => {
         const states = (payload.states ?? (payload.state ? [payload.state] : [])).map((state: EventState) => normalizeEvent(state));
         const remoteRoles = (rolePayload.roles ?? []) as RoleTemplate[];
         if (states.length) {
@@ -572,6 +580,17 @@ export function RelayWorkspace({ portalUser }: { portalUser: { name: string; ema
           if (rememberedPersonId && initial.people.some((person: Person) => person.id === rememberedPersonId)) setExecPersonId(rememberedPersonId);
           setBoardLocked(window.localStorage.getItem(`relay:v1:board-locked:${initial.eventId}`) === "true");
           setSelectedRoles({});
+          if (window.localStorage.getItem(WORKSPACE_MODE_KEY) === "exec") {
+            try {
+              const published = await fetchPublishedEvent(initial.eventId);
+              setPublishedData(published);
+              setDayId(published.days[0]?.id ?? initial.days[0].id);
+              setMode("exec");
+            } catch (error) {
+              window.localStorage.removeItem(WORKSPACE_MODE_KEY);
+              showError(error instanceof Error ? error.message : "Unable to restore Exec View.");
+            }
+          }
         }
       })
       .catch((error) => {
@@ -626,7 +645,6 @@ export function RelayWorkspace({ portalUser }: { portalUser: { name: string; ema
   };
 
   const activeDay = data.days.find((day) => day.id === dayId) ?? data.days[0];
-  const currentExec = data.people.find((person) => person.id === execPersonId) ?? data.people[0];
   const publication = getPublicationStatus(data.publishedAt);
   const warnings = useMemo(() => getAssignmentAvailabilityChecks(data.days, data.people), [data]);
 
@@ -925,25 +943,30 @@ export function RelayWorkspace({ portalUser }: { portalUser: { name: string; ema
     void save(next, `${person.name} marked ${status} for ${block.label}.`, previous);
   };
 
-  const openExecView = async () => {
+  async function openExecView(eventId = data.eventId) {
     setLoadingPublished(true);
     setLoadError("");
     try {
-      const response = await fetch(`/api/event-state/published?event=${encodeURIComponent(data.eventId)}`);
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error ?? "Unable to load the published schedule.");
-      const published = normalizeEvent(payload.state);
+      const published = await fetchPublishedEvent(eventId);
       setPublishedData(published);
       const remembered = window.localStorage.getItem(`relay:v1:exec-person:${published.eventId}`);
       if (remembered && published.people.some((person) => person.id === remembered)) setExecPersonId(remembered);
       else if (!published.people.some((person) => person.id === execPersonId)) setExecPersonId(published.people[0]?.id ?? "");
       setDayId(published.days[0]?.id ?? dayId);
       setMode("exec");
+      window.localStorage.setItem(WORKSPACE_MODE_KEY, "exec");
     } catch (error) {
+      setMode("director");
+      window.localStorage.removeItem(WORKSPACE_MODE_KEY);
       showError(error instanceof Error ? error.message : "Unable to load the published schedule.");
     } finally {
       setLoadingPublished(false);
     }
+  }
+
+  const exitExecView = () => {
+    window.localStorage.removeItem(WORKSPACE_MODE_KEY);
+    setMode("director");
   };
 
   const saveBlock = (block: EventBlock) => {
@@ -1146,12 +1169,12 @@ export function RelayWorkspace({ portalUser }: { portalUser: { name: string; ema
   };
 
   const directorSections: [Section, string, string][] = [
-    ["schedule", "Schedule", "01"],
-    ["prep", "Prep", "02"],
-    ["people", "People + availability", "03"],
-    ["roles", "Roles + instructions", "04"],
-    ...(data.judgingEnabled ? [["judging", "Judging rooms", "05"]] as [Section, string, string][] : []),
-    ["resources", "Event overview", data.judgingEnabled ? "06" : "05"],
+    ["schedule", "Schedule", "02"],
+    ["prep", "Prep", "03"],
+    ["people", "People + availability", "04"],
+    ["roles", "Roles + instructions", "05"],
+    ...(data.judgingEnabled ? [["judging", "Judging rooms", "06"]] as [Section, string, string][] : []),
+    ["resources", "Event overview", data.judgingEnabled ? "07" : "06"],
   ];
 
   return (
@@ -1163,16 +1186,16 @@ export function RelayWorkspace({ portalUser }: { portalUser: { name: string; ema
             <button className="sidebar-collapse" onClick={() => setSidebarCollapsed((current) => !current)} aria-label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"} title={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"}>{sidebarCollapsed ? "›" : "‹"}</button>
             <button className="event-mini" onClick={() => setShowEventLibrary(true)}><span className="event-mark">{data.eventName.slice(0, 2).toUpperCase()}</span><div><strong>{data.eventName}</strong><small>{data.dateRange}</small></div><span aria-hidden="true">⌄</span></button>
             <nav aria-label="Director workspace">
+              <button onClick={() => void openExecView()} disabled={loadingPublished}><span>01</span>{loadingPublished ? "Loading exec view…" : "Exec view"}</button>
               {directorSections.map(([id, label, number]) => (
                 <button key={id} className={section === id ? "active" : ""} onClick={() => setSection(id)}><span>{number}</span>{label}{id === "schedule" && warnings.length > 0 ? <b>{warnings.length}</b> : null}</button>
               ))}
             </nav>
-            <div className="sidebar-bottom"><button onClick={() => void openExecView()} disabled={loadingPublished}><span className="avatar avatar-small" style={{ background: currentExec.color }}>{currentExec.initials}</span><div><strong>{loadingPublished ? "Loading published view…" : "Exec view"}</strong><small>{currentExec.name}</small></div><span>↗</span></button></div>
           </aside>
           <main className="workspace">
             <header className="workspace-header">
               <div><div className="eyebrow">{data.eventType} · {data.venue}</div><h1>{data.eventName}</h1><p>{data.dateRange} <span>•</span> Status: {publication.status}{publication.isPublished ? <> <span>•</span> {publication.activity}</> : null}{data.draftChanges ? <> <span>•</span> {data.draftChanges} edit{data.draftChanges === 1 ? "" : "s"} ahead</> : null}</p>{data.relayMeta?.updatedBy ? <small className="audit-line">Last edited by {data.relayMeta.updatedBy}{data.relayMeta.updatedAt ? ` · ${new Date(data.relayMeta.updatedAt).toLocaleString()}` : ""}{data.relayMeta.publishedBy ? ` · Published by ${data.relayMeta.publishedBy}` : ""}</small> : null}</div>
-              <div className="header-actions"><span className={`save-state ${saving ? "saving" : ""}`}>{publishing ? "Publishing…" : saving ? "Saving…" : hydrated ? "All changes saved" : "Connecting…"}</span><button className="button secondary" onClick={() => setShowEventSettings(true)}>Settings</button><button className="button secondary" onClick={() => setShowNewEvent(true)}>+ New event</button><button className="button secondary" onClick={() => void openExecView()} disabled={loadingPublished}>{loadingPublished ? "Loading…" : "Exec view"}</button><button className="button primary" onClick={() => void publish()} disabled={data.draftChanges === 0 || publishing}>{publishing ? "Publishing…" : `Publish ${data.draftChanges ? `${data.draftChanges} changes` : "changes"}`}</button><button className="button text-button" onClick={() => void signOut({ callbackUrl: "/" })} title={portalUser.email}>Sign out</button></div>
+              <div className="header-actions"><span className={`save-state ${saving ? "saving" : ""}`}>{publishing ? "Publishing…" : saving ? "Saving…" : hydrated ? "All changes saved" : "Connecting…"}</span><button className="button secondary" onClick={() => setShowEventSettings(true)}>Settings</button><button className="button secondary" onClick={() => setShowNewEvent(true)}>+ New event</button><button className="button primary" onClick={() => void publish()} disabled={data.draftChanges === 0 || publishing}>{publishing ? "Publishing…" : `Publish ${data.draftChanges ? `${data.draftChanges} changes` : "changes"}`}</button><button className="button text-button" onClick={() => void signOut({ callbackUrl: "/" })} title={portalUser.email}>Sign out</button></div>
             </header>
 
             {section === "schedule" && <ScheduleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} warnings={warnings} reviewTarget={scheduleReviewTarget} selectedRoles={selectedRoles} boardLocked={boardLocked} roleTemplates={roleTemplates} onToggleLock={toggleBoardLock} onSelectRole={toggleSelectedRole} onCell={changeAssignment} onAssignRole={assignBlockRoleToPerson} onClearAssignment={clearAssignment} onMoveAssignment={moveAssignment} onAddRole={addScheduleRoleToBlock} onCreateRole={createAndAddRole} onEditRole={(blockId, blockRoleId) => setRoleEditor({ blockId, blockRoleId })} onRemoveRole={removeBlockRole} onAssignRest={assignRestToOnCall} onAddBlock={() => setBlockEditor({})} onImport={() => setShowScheduleImport(true)} onEditBlock={(blockId) => setBlockEditor({ blockId })} onDuplicateBlock={duplicateBlock} onDeleteBlock={setDeleteBlockId} onReview={reviewScheduleCheck} onViewAll={() => setShowScheduleChecks(true)} />}
@@ -1195,7 +1218,7 @@ export function RelayWorkspace({ portalUser }: { portalUser: { name: string; ema
           {deleteBlockId && activeDay.blocks.some((block) => block.id === deleteBlockId) ? <DeleteBlockDialog block={activeDay.blocks.find((block) => block.id === deleteBlockId)!} assignmentCount={activeDay.assignments.filter((assignment) => assignment.blockId === deleteBlockId).length} onClose={() => setDeleteBlockId(null)} onConfirm={() => deleteBlock(deleteBlockId)} /> : null}
         </>
       ) : (
-        publishedData ? <PublishedExecView data={publishedData} person={publishedData.people.find((person) => person.id === execPersonId) ?? publishedData.people[0]!} dayId={dayId} setDayId={setDayId} onPersonChange={changeExecPerson} onExit={() => setMode("director")} /> : null
+        publishedData ? <PublishedExecView data={publishedData} person={publishedData.people.find((person) => person.id === execPersonId) ?? publishedData.people[0]!} dayId={dayId} setDayId={setDayId} onPersonChange={changeExecPerson} onExit={exitExecView} /> : null
       )}
       {toast ? <div className={`toast ${toastError ? "error" : ""}`} role={toastError ? "alert" : "status"}><span>{toastError ? "!" : "✓"}</span>{toast}{!toastError && undoState ? <button onClick={() => { const previous = undoState; setUndoState(null); void save(previous, "Change undone."); }}>Undo</button> : null}</div> : null}
     </div>
@@ -1642,5 +1665,5 @@ function RoleEditor({ data, day, editor, onClose, onSave, onRemove }: { data: Ev
 function PublishedExecView({ data, person, dayId, setDayId, onPersonChange, onExit }: { data: EventState; person: Person; dayId: string; setDayId: (id: string) => void; onPersonChange: (personId: string) => void; onExit: () => void }) {
   const day = data.days.find((item) => item.id === dayId) ?? data.days[0];
   const assignments = day?.assignments.filter((assignment) => assignment.personId === person.id) ?? [];
-  return <div className="exec-app"><header className="exec-header"><button className="exec-brand" onClick={onExit}><span>R</span> relay</button><div><label className="exec-profile exec-profile-picker"><PersonAvatar person={person} /><select aria-label="Viewing published roles for" value={person.id} onChange={(event) => onPersonChange(event.target.value)}>{data.people.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}</select></label><button className="exit-preview" onClick={onExit}>Back to portal</button></div></header><main><section className="exec-welcome"><div><span className="kicker">Published exec view</span><h1>{person.name}’s roles</h1><p>{data.eventName} · {day?.date} · {data.venue}</p></div><DayToggle data={data} dayId={dayId} setDayId={setDayId} /></section><section className="my-day"><div className="subhead"><div><span className="kicker">Assigned roles</span><h3>{assignments.length} role{assignments.length === 1 ? "" : "s"} on {day?.label}</h3></div></div><div className="itinerary">{assignments.map((assignment) => { const block = day.blocks.find((item) => item.id === assignment.blockId)!; const details = assignmentPlaceAndLead(block, assignment, data.people).replace(/^⌖ /, ""); const teammates = day.assignments.filter((candidate) => candidate.blockId === assignment.blockId && candidate.blockRoleId === assignment.blockRoleId && candidate.personId !== person.id).map((candidate) => data.people.find((member) => member.id === candidate.personId)?.name).filter(Boolean); return <article key={assignment.id}><div className="itinerary-time"><strong>{block.start}</strong><span>{block.end}</span></div><i style={{ background: assignment.color || roleColor(assignment.role) }} /><div><span>{block.label}</span><h4>{assignment.role}</h4>{details ? <p>{details}</p> : null}<p>{assignment.description || "No additional instructions."}</p>{teammates.length ? <p>With {teammates.join(", ")}</p> : null}</div></article>; })}{!assignments.length ? <p className="empty-copy">No roles are assigned to {person.name} on {day?.label}.</p> : null}</div></section></main></div>;
+  return <div className="exec-app"><header className="exec-header"><div className="exec-brand"><span>R</span> relay</div><div><label className="exec-profile exec-profile-picker"><PersonAvatar person={person} /><select aria-label="Viewing published roles for" value={person.id} onChange={(event) => onPersonChange(event.target.value)}>{data.people.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}</select></label><button className="exit-preview" onClick={onExit}>Back to portal</button></div></header><main><section className="exec-welcome"><div><span className="kicker">Exec view</span><h1>{person.name}’s roles</h1><p>{data.eventName} · {day?.date} · {data.venue}</p></div><DayToggle data={data} dayId={dayId} setDayId={setDayId} /></section><section className="my-day"><div className="subhead"><div><span className="kicker">Assigned roles</span><h3>{assignments.length} role{assignments.length === 1 ? "" : "s"} on {day?.label}</h3></div></div><div className="itinerary">{assignments.map((assignment) => { const block = day.blocks.find((item) => item.id === assignment.blockId)!; const details = assignmentPlaceAndLead(block, assignment, data.people).replace(/^⌖ /, ""); const teammates = day.assignments.filter((candidate) => candidate.blockId === assignment.blockId && candidate.blockRoleId === assignment.blockRoleId && candidate.personId !== person.id).map((candidate) => data.people.find((member) => member.id === candidate.personId)?.name).filter(Boolean); return <article key={assignment.id}><div className="itinerary-time"><strong>{block.start}</strong><span>{block.end}</span></div><i style={{ background: assignment.color || roleColor(assignment.role) }} /><div><span>{block.label}</span><h4>{assignment.role}</h4>{details ? <p>{details}</p> : null}<p>{assignment.description || "No additional instructions."}</p>{teammates.length ? <p>With {teammates.join(", ")}</p> : null}</div></article>; })}{!assignments.length ? <p className="empty-copy">No roles are assigned to {person.name} on {day?.label}.</p> : null}</div></section></main></div>;
 }

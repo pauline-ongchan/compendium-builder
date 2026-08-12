@@ -871,4 +871,18 @@ button { color: inherit; }
 .access-secondary { display: block; margin-top: 18px; color: #514d46; text-align: center; }
 .access-error { padding: 12px 14px; border: 1px solid #e4a99f; border-radius: 10px; background: #fff0ed; color: #9b3024 !important; }
 .landing-card { width: min(620px, 100%); }
+.sign-in-page { position: relative; isolation: isolate; overflow: hidden; background: #edf0e6; }
+.sign-in-page::before, .sign-in-page::after { content: ""; position: absolute; z-index: -1; border-radius: 999px; filter: blur(2px); }
+.sign-in-page::before { width: min(46vw, 620px); aspect-ratio: 1; top: -28%; right: -8%; background: #dfef79; opacity: .7; }
+.sign-in-page::after { width: min(40vw, 520px); aspect-ratio: 1; bottom: -30%; left: -8%; background: #f3c8cf; opacity: .72; }
+.sign-in-card { width: min(410px, 100%); padding: 44px; border: 1px solid rgba(21, 33, 31, .14); border-radius: 20px; background: rgba(255, 253, 248, .94); box-shadow: 0 28px 90px rgba(21, 33, 31, .14); backdrop-filter: blur(16px); }
+.sign-in-brand { margin: 0 auto 42px; font-size: 18px; }
+.sign-in-brand span { border-radius: 9px 9px 9px 2px; background: var(--ink); }
+.sign-in-heading { text-align: center; }
+.sign-in-card h1 { margin: 0 0 28px; font-size: clamp(2.4rem, 7vw, 3.5rem); }
+.google-sign-in { width: 100%; min-height: 52px; margin-top: 6px; border: 1px solid #c9cdc6; border-radius: 11px; background: white; color: var(--ink); display: flex; align-items: center; justify-content: center; gap: 11px; font-size: 13px; font-weight: 760; cursor: pointer; box-shadow: 0 4px 0 rgba(21, 33, 31, .07); transition: border-color .15s, box-shadow .15s, transform .15s; }
+.google-sign-in:hover:not(:disabled) { border-color: var(--ink); box-shadow: 0 7px 0 rgba(21, 33, 31, .09); transform: translateY(-1px); }
+.google-sign-in:disabled { opacity: .45; cursor: default; }
+.google-mark { width: 25px; height: 25px; border: 1px solid #d8dcd5; border-radius: 50%; display: grid; place-items: center; color: #4285f4; font-family: Arial, sans-serif; font-size: 13px; font-weight: 800; }
+.sign-in-card .access-error { margin: 0 0 16px; font-size: 11px; text-align: center; }
 .audit-line { display: block; margin-top: 6px; color: #6f6a62; }
