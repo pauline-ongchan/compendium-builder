@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { RelayWorkspace } from "./relay-workspace";
+import { redirect } from "next/navigation";
 
 export const metadata: Metadata = {
   title: "Relay — Event operations, in sync",
@@ -8,5 +8,5 @@ export const metadata: Metadata = {
 };
 
 export default function Home() {
-  return <RelayWorkspace />;
+  redirect("/admin/sign-in");
 }

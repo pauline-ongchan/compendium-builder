@@ -7,8 +7,8 @@ test("publishes the latest event and returns the persisted version", async () =>
   const draft = { eventId: "event-1", draftChanges: 2, publishedAt: "Yesterday", days: [{ id: "day-1" }] };
   let persisted;
   const request = async (url, options) => {
-    assert.equal(url, "/api/event-state");
-    assert.equal(options.method, "PUT");
+    assert.equal(url, "/api/event-state/publish");
+    assert.equal(options.method, "POST");
     persisted = JSON.parse(options.body);
     return Response.json({ ok: true, state: persisted });
   };

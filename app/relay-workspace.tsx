@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { signOut } from "next-auth/react";
 import {
   eventTimeToMinutes,
   findAssignmentConflict,
@@ -19,7 +20,17 @@ import { moveRoleOptionIndex, nextRoleColor, roleColor } from "./role-presentati
 import { isRoleSnapshotCustomized, normalizeRoleName, parseRoleImportCsv, roleImportCsvTemplate, similarRoleTemplates, type RoleImportRow, type SharedRoleTemplate } from "./role-library";
 
 type Section = "schedule" | "prep" | "people" | "roles" | "judging" | "resources";
-type ExecSection = "today" | "schedule" | "prep" | "availability" | "overview" | "directory";
+const WORKSPACE_MODE_KEY = "relay:v1:workspace-mode";
+
+function setExecViewUrl(active: boolean, eventId?: string) {
+  const url = new URL(window.location.href);
+  if (active) {
+    url.searchParams.set("view", "exec");
+    if (eventId) url.searchParams.set("event", eventId);
+  } else url.searchParams.delete("view");
+  window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+}
+type RelayMeta = { shareToken: string | null; updatedAt: string | null; updatedBy: string | null; publishedAt: string | null; publishedBy: string | null };
 
 type BlockLink = { id: string; label: string; url: string };
 type RoleTemplate = SharedRoleTemplate;
@@ -124,6 +135,7 @@ type EventState = {
   groups: ExecGroup[];
   contacts: ImportantContact[];
   judgingRooms: JudgingRoom[];
+  relayMeta?: RelayMeta;
 };
 
 const roleDescriptions: Record<string, string> = {
@@ -521,13 +533,21 @@ function PersonAvatar({ person, small = false }: { person: Person; small?: boole
   return <span className={`avatar ${small ? "avatar-small" : ""}`} style={{ background: person.color }}>{person.initials}</span>;
 }
 
-export function RelayWorkspace() {
+async function fetchPublishedEvent(eventId?: string) {
+  const query = eventId ? `?event=${encodeURIComponent(eventId)}` : "";
+  const response = await fetch(`/api/event-state/published${query}`);
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error ?? "Unable to load the published schedule.");
+  return normalizeEvent(payload.state as EventState);
+}
+
+export function RelayWorkspace({ initialMode = "director", portalUser }: { initialMode?: "director" | "exec"; portalUser: { name: string; email: string } }) {
   const [data, setData] = useState<EventState>(() => normalizeEvent(seedData));
+  const [publishedData, setPublishedData] = useState<EventState | null>(null);
   const [eventLibrary, setEventLibrary] = useState<EventState[]>(() => [normalizeEvent(seedData)]);
   const [hydrated, setHydrated] = useState(false);
-  const [mode, setMode] = useState<"director" | "exec">("director");
+  const [mode, setMode] = useState<"director" | "exec">(initialMode);
   const [section, setSection] = useState<Section>("schedule");
-  const [execSection, setExecSection] = useState<ExecSection>("today");
   const [dayId, setDayId] = useState("day2");
   const [roleTemplates, setRoleTemplates] = useState<RoleTemplate[]>(builtInRoleTemplates);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -553,6 +573,7 @@ export function RelayWorkspace() {
   const [undoState, setUndoState] = useState<EventState | null>(null);
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [loadingPublished, setLoadingPublished] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [confirmation, setConfirmation] = useState<ConfirmationRequest | null>(null);
   const [shareLink, setShareLink] = useState<ShareLink | null>(null);
@@ -578,15 +599,31 @@ export function RelayWorkspace() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const initialView = params.get("view");
     const initialPersonId = params.get("person");
-    queueMicrotask(() => {
-      if (initialView === "availability" || initialView === "prep") {
-        setMode("exec");
-        setExecSection(initialView);
-        if (initialPersonId) setExecPersonId(initialPersonId);
-      }
-    });
+    const requestedEventId = params.get("event") ?? undefined;
+    const restoreExecView = params.get("view") === "exec" || window.localStorage.getItem(WORKSPACE_MODE_KEY) === "exec";
+
+    if (restoreExecView) {
+      void fetchPublishedEvent(requestedEventId)
+        .then((published) => {
+          setPublishedData(published);
+          setDayId(published.days[0]?.id ?? "day1");
+          const rememberedPersonId = initialPersonId ?? window.localStorage.getItem(`relay:v1:exec-person:${published.eventId}`);
+          if (rememberedPersonId && published.people.some((person: Person) => person.id === rememberedPersonId)) {
+            setExecPersonId(rememberedPersonId);
+          }
+          setMode("exec");
+          window.localStorage.setItem(WORKSPACE_MODE_KEY, "exec");
+          setExecViewUrl(true, published.eventId);
+        })
+        .catch((error) => {
+          window.localStorage.removeItem(WORKSPACE_MODE_KEY);
+          setExecViewUrl(false);
+          setMode("director");
+          showError(error instanceof Error ? error.message : "Unable to restore Exec View.");
+        });
+    }
+
     Promise.all([
       fetch("/api/event-state").then(async (response) => {
         const payload = await response.json().catch(() => ({}));
@@ -599,7 +636,6 @@ export function RelayWorkspace() {
         const states = (payload.states ?? (payload.state ? [payload.state] : [])).map((state: EventState) => normalizeEvent(state));
         const remoteRoles = (rolePayload.roles ?? []) as RoleTemplate[];
         if (states.length) {
-          const requestedEventId = new URLSearchParams(window.location.search).get("event");
           const initial = states.find((state: EventState) => state.eventId === requestedEventId) ?? states[0];
           const mergedRoles = new Map<string, RoleTemplate>();
           const librarySources = remoteRoles.length ? [...builtInRoleTemplates, ...remoteRoles] : [...builtInRoleTemplates, ...initial.roleLibrary];
@@ -610,7 +646,11 @@ export function RelayWorkspace() {
           setRoleTemplates(Array.from(mergedRoles.values()).sort((a, b) => a.name.localeCompare(b.name)));
           setEventLibrary(states);
           setData(initial);
-          setDayId(initial.days[0].id);
+          if (!restoreExecView) {
+            setDayId(initial.days[0].id);
+            const rememberedPersonId = initialPersonId ?? window.localStorage.getItem(`relay:v1:exec-person:${initial.eventId}`);
+            if (rememberedPersonId && initial.people.some((person: Person) => person.id === rememberedPersonId)) setExecPersonId(rememberedPersonId);
+          }
           setBoardLocked(window.localStorage.getItem(`relay:v1:board-locked:${initial.eventId}`) === "true");
           setSelectedRoles({});
         }
@@ -651,6 +691,12 @@ export function RelayWorkspace() {
         const payload = await response.json().catch(() => ({}));
         throw new Error(payload.error ?? `HTTP ${response.status}`);
       }
+      const payload = await response.json();
+      if (payload.state) {
+        const persisted = normalizeEvent(payload.state);
+        setData(persisted);
+        setEventLibrary((current) => current.map((event) => event.eventId === persisted.eventId ? persisted : event));
+      }
     } catch (error) {
       setUndoState(null);
       showError(`Save failed: ${error instanceof Error ? error.message : "Unable to save this change."}`);
@@ -661,7 +707,6 @@ export function RelayWorkspace() {
   };
 
   const activeDay = data.days.find((day) => day.id === dayId) ?? data.days[0];
-  const currentExec = data.people.find((person) => person.id === execPersonId) ?? data.people[0];
   const publication = getPublicationStatus(data.publishedAt);
   const warnings = useMemo(() => getAssignmentAvailabilityChecks(data.days, data.people), [data]);
 
@@ -672,6 +717,7 @@ export function RelayWorkspace() {
     try {
       const published = normalizeEvent(await publishEventState(mapTimeAvailabilityToBlocks(structuredClone(data))));
       setData(published);
+      setPublishedData(published);
       setEventLibrary((current) => current.some((event) => event.eventId === published.eventId) ? current.map((event) => event.eventId === published.eventId ? published : event) : [published, ...current]);
       setToastError(false);
       setToast("Published. Everyone’s view is up to date.");
@@ -947,23 +993,59 @@ export function RelayWorkspace() {
     requestBlockRoleRemoval(roleEditor.blockId, roleEditor.blockRoleId);
   };
 
-  const updateAvailability = (personId: string, availabilityDayId: string, slotKey: string) => {
-    const next = structuredClone(data);
-    const person = next.people.find((item) => item.id === personId)!;
-    person.availabilitySlots ??= {};
-    person.availabilitySlots[availabilityDayId] ??= {};
-    person.availabilitySlots[availabilityDayId][slotKey] = !person.availabilitySlots[availabilityDayId][slotKey];
-    next.draftChanges += 1;
-    void save(next, "Free time updated.");
+  const changeExecPerson = (personId: string) => {
+    setExecPersonId(personId);
+    window.localStorage.setItem(`relay:v1:exec-person:${(publishedData ?? data).eventId}`, personId);
   };
 
-  const updatePrepAvailability = (personId: string, sessionId: string) => {
+  const cycleBlockAvailability = (personId: string, blockId: string) => {
+    const previous = structuredClone(data);
     const next = structuredClone(data);
+    const day = next.days.find((item) => item.id === dayId)!;
+    const block = day.blocks.find((item) => item.id === blockId)!;
     const person = next.people.find((item) => item.id === personId)!;
-    const current = person.prepAvailability[sessionId] ?? "available";
-    person.prepAvailability[sessionId] = current === "available" ? "conditional" : current === "conditional" ? "unavailable" : "available";
+    const blockStart = eventTimeToMinutes(block.start);
+    const blockEnd = eventTimeToMinutes(block.end);
+    const relevantSlots = getAvailabilitySlots(day).filter((slot) => slot.start < blockEnd && slot.end > blockStart);
+    const current = person.availability[day.id]?.[block.id] ?? "unavailable";
+    const requested: AvailabilityStatus = current === "unavailable" ? "available" : current === "available" ? "conditional" : "unavailable";
+    const status: AvailabilityStatus = requested === "conditional" && relevantSlots.length < 2 ? "unavailable" : requested;
+    person.availabilitySlots ??= {};
+    person.availabilitySlots[day.id] ??= {};
+    relevantSlots.forEach((slot, index) => {
+      person.availabilitySlots![day.id][slot.key] = status === "available" || (status === "conditional" && index < Math.ceil(relevantSlots.length / 2));
+    });
     next.draftChanges += 1;
-    void save(next, "Prep availability updated.");
+    void save(next, `${person.name} marked ${status} for ${block.label}.`, previous);
+  };
+
+  async function openExecView(eventId = data.eventId) {
+    setLoadingPublished(true);
+    setLoadError("");
+    try {
+      const published = await fetchPublishedEvent(eventId);
+      setPublishedData(published);
+      const remembered = window.localStorage.getItem(`relay:v1:exec-person:${published.eventId}`);
+      if (remembered && published.people.some((person) => person.id === remembered)) setExecPersonId(remembered);
+      else if (!published.people.some((person) => person.id === execPersonId)) setExecPersonId(published.people[0]?.id ?? "");
+      setDayId(published.days[0]?.id ?? dayId);
+      setMode("exec");
+      window.localStorage.setItem(WORKSPACE_MODE_KEY, "exec");
+      setExecViewUrl(true, published.eventId);
+    } catch (error) {
+      setMode("director");
+      window.localStorage.removeItem(WORKSPACE_MODE_KEY);
+      setExecViewUrl(false);
+      showError(error instanceof Error ? error.message : "Unable to load the published schedule.");
+    } finally {
+      setLoadingPublished(false);
+    }
+  }
+
+  const exitExecView = () => {
+    window.localStorage.removeItem(WORKSPACE_MODE_KEY);
+    setExecViewUrl(false);
+    setMode("director");
   };
 
   const saveBlock = (block: EventBlock) => {
@@ -1226,20 +1308,6 @@ export function RelayWorkspace() {
     }
   };
 
-  const shareAvailability = async () => {
-    const url = new URL(window.location.href);
-    url.search = "";
-    url.searchParams.set("view", "availability");
-    url.searchParams.set("event", data.eventId);
-    try {
-      await navigator.clipboard.writeText(url.toString());
-      setToast("Availability link copied. Send it to the event roster.");
-      window.setTimeout(() => setToast(""), 2400);
-    } catch {
-      setShareLink({ title: "Share availability", message: "Copy this link and send it to the event roster.", url: url.toString() });
-    }
-  };
-
   const saveEventSettings = (eventType: string, judgingEnabled: boolean) => {
     const next = { ...structuredClone(data), eventType, judgingEnabled, draftChanges: data.draftChanges + 1 };
     if (!judgingEnabled && section === "judging") setSection("schedule");
@@ -1265,10 +1333,9 @@ export function RelayWorkspace() {
   };
 
   const sharePrep = async () => {
-    const url = new URL(window.location.href);
-    url.search = "";
+    if (!data.relayMeta?.shareToken) return showError("Save the event once before sharing prep.");
+    const url = new URL(`/exec/${data.relayMeta.shareToken}`, window.location.origin);
     url.searchParams.set("view", "prep");
-    url.searchParams.set("event", data.eventId);
     try {
       await navigator.clipboard.writeText(url.toString());
       setToast("Prep link copied. Send it to everyone helping before the event.");
@@ -1291,6 +1358,7 @@ export function RelayWorkspace() {
 
   const switchEvent = (event: EventState) => {
     setData(normalizeEvent(event));
+    setPublishedData(null);
     setDayId(event.days[0].id);
     setShowEventLibrary(false);
     setSection("schedule");
@@ -1308,17 +1376,21 @@ export function RelayWorkspace() {
   };
 
   const directorSections: [Section, string, string][] = [
-    ["schedule", "Schedule", "01"],
-    ["prep", "Prep", "02"],
-    ["people", "People + availability", "03"],
-    ["roles", "Roles + instructions", "04"],
-    ...(data.judgingEnabled ? [["judging", "Judging rooms", "05"]] as [Section, string, string][] : []),
-    ["resources", "Event overview", data.judgingEnabled ? "06" : "05"],
+    ["schedule", "Schedule", "02"],
+    ["prep", "Prep", "03"],
+    ["people", "People + availability", "04"],
+    ["roles", "Roles + instructions", "05"],
+    ...(data.judgingEnabled ? [["judging", "Judging rooms", "06"]] as [Section, string, string][] : []),
+    ["resources", "Event overview", data.judgingEnabled ? "07" : "06"],
   ];
   const roleRemovalDay = roleRemoval ? data.days.find((day) => day.id === roleRemoval.dayId) : undefined;
   const roleRemovalBlock = roleRemovalDay?.blocks.find((block) => block.id === roleRemoval?.blockId);
   const roleRemovalRole = roleRemovalBlock && roleRemoval ? blockRoles(roleRemovalBlock).find((role) => role.id === roleRemoval.blockRoleId) : undefined;
   const roleRemovalAssignmentCount = roleRemovalDay && roleRemoval ? roleRemovalDay.assignments.filter((assignment) => assignment.blockId === roleRemoval.blockId && assignment.blockRoleId === roleRemoval.blockRoleId).length : 0;
+
+  if (mode === "exec" && !publishedData) {
+    return <main className="exec-loading" aria-busy="true"><header><div className="exec-brand"><span>R</span> relay</div><div className="exec-loading-profile"><i /><span /></div></header><section className="exec-loading-body" role="status" aria-label="Loading Exec View"><div className="exec-loading-kicker" /><div className="exec-loading-title" /><div className="exec-loading-subtitle" /><div className="exec-loading-days"><i /><i /></div><div className="exec-loading-section"><div /><span /></div><div className="exec-loading-roles">{[0, 1, 2, 3].map((item) => <article key={item}><time /><i /><div><span /><strong /><small /></div></article>)}</div><p>Preparing your published roles<span>…</span></p></section></main>;
+  }
 
   return (
     <div className={`app-shell ${mode === "exec" ? "exec-shell" : ""} ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
@@ -1329,21 +1401,21 @@ export function RelayWorkspace() {
             <button className="sidebar-collapse" onClick={() => setSidebarCollapsed((current) => !current)} aria-label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"} title={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"}>{sidebarCollapsed ? "›" : "‹"}</button>
             <button className="event-mini" onClick={() => setShowEventLibrary(true)}><span className="event-mark">{data.eventName.slice(0, 2).toUpperCase()}</span><div><strong>{data.eventName}</strong><small>{data.dateRange}</small></div><span aria-hidden="true">⌄</span></button>
             <nav aria-label="Director workspace">
+              <button onClick={() => void openExecView()} disabled={loadingPublished}><span>01</span>{loadingPublished ? "Loading exec view…" : "Exec view"}</button>
               {directorSections.map(([id, label, number]) => (
                 <button key={id} className={section === id ? "active" : ""} onClick={() => setSection(id)}><span>{number}</span>{label}{id === "schedule" && warnings.length > 0 ? <b>{warnings.length}</b> : null}</button>
               ))}
             </nav>
-            <div className="sidebar-bottom"><button onClick={() => setMode("exec")}><span className="avatar avatar-small" style={{ background: currentExec.color }}>{currentExec.initials}</span><div><strong>Preview as exec</strong><small>{currentExec.name}</small></div><span>↗</span></button></div>
           </aside>
           <main className="workspace">
             <header className="workspace-header">
-              <div><div className="eyebrow">{data.eventType} · {data.venue}</div><h1>{data.eventName}</h1><p>{data.dateRange} <span>•</span> Status: {publication.status}{publication.isPublished ? <> <span>•</span> {publication.activity}</> : null}{data.draftChanges ? <> <span>•</span> {data.draftChanges} edit{data.draftChanges === 1 ? "" : "s"} ahead</> : null}</p></div>
-              <div className="header-actions"><span className={`save-state ${saving ? "saving" : ""}`}>{publishing ? "Publishing…" : saving ? "Saving…" : hydrated ? "All changes saved" : "Connecting…"}</span><button className="button secondary" onClick={() => setShowEventSettings(true)}>Settings</button><button className="button secondary" onClick={() => setShowNewEvent(true)}>+ New event</button><button className="button secondary" onClick={() => setMode("exec")}>Exec view</button><button className="button primary" onClick={() => void publish()} disabled={data.draftChanges === 0 || publishing}>{publishing ? "Publishing…" : `Publish ${data.draftChanges ? `${data.draftChanges} changes` : "changes"}`}</button></div>
+              <div><div className="eyebrow">{data.eventType} · {data.venue}</div><h1>{data.eventName}</h1><p>{data.dateRange} <span>•</span> Status: {publication.status}{publication.isPublished ? <> <span>•</span> {publication.activity}</> : null}{data.draftChanges ? <> <span>•</span> {data.draftChanges} edit{data.draftChanges === 1 ? "" : "s"} ahead</> : null}</p>{data.relayMeta?.updatedBy ? <small className="audit-line">Last edited by {data.relayMeta.updatedBy}{data.relayMeta.updatedAt ? ` · ${new Date(data.relayMeta.updatedAt).toLocaleString()}` : ""}{data.relayMeta.publishedBy ? ` · Published by ${data.relayMeta.publishedBy}` : ""}</small> : null}</div>
+              <div className="header-actions"><span className={`save-state ${saving ? "saving" : ""}`}>{publishing ? "Publishing…" : saving ? "Saving…" : hydrated ? "All changes saved" : "Connecting…"}</span><button className="button secondary" onClick={() => setShowEventSettings(true)}>Settings</button><button className="button secondary" onClick={() => setShowNewEvent(true)}>+ New event</button><button className="button primary" onClick={() => void publish()} disabled={data.draftChanges === 0 || publishing}>{publishing ? "Publishing…" : `Publish ${data.draftChanges ? `${data.draftChanges} changes` : "changes"}`}</button><button className="button text-button" onClick={() => void signOut({ callbackUrl: "/" })} title={portalUser.email}>Sign out</button></div>
             </header>
 
             {section === "schedule" && <ScheduleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} warnings={warnings} reviewTarget={scheduleReviewTarget} selectedRoles={selectedRoles} boardLocked={boardLocked} roleTemplates={roleTemplates} onToggleLock={toggleBoardLock} onSelectRole={toggleSelectedRole} onCell={changeAssignment} onAssignRole={assignBlockRoleToPerson} onClearAssignment={clearAssignment} onMoveAssignment={moveAssignment} onAddRole={addScheduleRoleToBlock} onCreateRole={createAndAddRole} onEditRole={(blockId, blockRoleId) => setRoleEditor({ blockId, blockRoleId })} onRemoveRole={requestBlockRoleRemoval} onAssignRest={assignRestToOnCall} onAddBlock={() => setBlockEditor({})} onImport={() => setShowScheduleImport(true)} onEditBlock={(blockId) => setBlockEditor({ blockId })} onDuplicateBlock={duplicateBlock} onDeleteBlock={setDeleteBlockId} onReview={reviewScheduleCheck} onViewAll={() => setShowScheduleChecks(true)} />}
             {section === "prep" && <PrepView data={data} onSave={savePrep} onShare={sharePrep} />}
-            {section === "people" && <PeopleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} onManageRoster={() => setShowRoster(true)} onShareAvailability={shareAvailability} onEditProfile={setProfilePersonId} />}
+            {section === "people" && <PeopleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} onManageRoster={() => setShowRoster(true)} onAvailability={cycleBlockAvailability} onEditProfile={setProfilePersonId} />}
             {section === "roles" && <RolesView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} roleTemplates={roleTemplates} onOpen={(blockId, blockRoleId) => setRoleEditor({ blockId, blockRoleId })} onEditBlock={(blockId) => setBlockEditor({ blockId })} onAddRoleToBlock={addLibraryRoleToBlock} onCreateRole={() => setRoleTemplateEditor({})} onEditRole={(templateId) => setRoleTemplateEditor({ templateId })} onImport={() => setShowRoleImport(true)} />}
             {section === "judging" && <JudgingView data={data} onCycle={cycleJudgingStatus} />}
             {section === "resources" && <ResourcesView data={data} onSave={saveOverview} />}
@@ -1363,7 +1435,7 @@ export function RelayWorkspace() {
           {roleRemovalBlock && roleRemovalRole ? <RemoveRoleDialog block={roleRemovalBlock} role={roleRemovalRole} assignmentCount={roleRemovalAssignmentCount} onClose={() => setRoleRemoval(null)} onConfirm={removeBlockRole} /> : null}
         </>
       ) : (
-        <ExecView data={data} person={currentExec} dayId={dayId} setDayId={setDayId} section={execSection} setSection={setExecSection} onAvailability={updateAvailability} onPrepAvailability={updatePrepAvailability} onPersonChange={setExecPersonId} onExit={() => setMode("director")} />
+        publishedData ? <PublishedExecView data={publishedData} person={publishedData.people.find((person) => person.id === execPersonId) ?? publishedData.people[0]!} dayId={dayId} setDayId={setDayId} onPersonChange={changeExecPerson} onExit={exitExecView} /> : null
       )}
       {confirmation ? <ConfirmationDialog request={confirmation} onCancel={() => resolveConfirmation(false)} onConfirm={() => resolveConfirmation(true)} /> : null}
       {shareLink ? <ShareLinkDialog shareLink={shareLink} onClose={() => setShareLink(null)} onCopied={() => { setShareLink(null); setToast("Link copied."); window.setTimeout(() => setToast(""), 2400); }} /> : null}
@@ -1633,10 +1705,10 @@ function PrepView({ data, onSave, onShare }: { data: EventState; onSave: (sessio
   return <div className="content"><div className="section-title compact"><div><span className="kicker">Before the event</span><h2>Prep mini-compendium</h2><p>Plan the working sessions, collect availability, and keep every packing, printing, and walkthrough task in one place.</p></div><div className="prep-header-actions"><button className="button secondary" onClick={onShare}>Share prep</button><button className="button primary" onClick={() => onSave(sessions, tasks, availability)}>Save prep plan</button></div></div><div className="prep-summary"><div><strong>{sessions.length}</strong><span>prep sessions</span></div><div><strong>{tasks.filter((task) => task.done).length}/{tasks.length}</strong><span>tasks complete</span></div><div><strong>{new Set(tasks.map((task) => task.ownerPersonId).filter(Boolean)).size}</strong><span>people owning work</span></div></div><div className="prep-workspace"><section className="prep-panel"><div className="form-section-head"><div><h3>Prep sessions</h3><p>Usually scheduled a few days before the event.</p></div><button onClick={() => setSessions((current) => [...current, { id: `prep-session-${Date.now()}`, label: "New prep session", date: "", start: "5:00 PM", end: "7:00 PM", location: "" }])}>+ Add session</button></div><div className="prep-session-list">{sessions.map((session) => <article key={session.id}><input value={session.label} aria-label="Session name" onChange={(event) => updateSession(session.id, { label: event.target.value })} /><input type="date" value={session.date} aria-label={`${session.label} date`} onChange={(event) => updateSession(session.id, { date: event.target.value })} /><input value={session.start} aria-label={`${session.label} start time`} onChange={(event) => updateSession(session.id, { start: event.target.value })} /><input value={session.end} aria-label={`${session.label} end time`} onChange={(event) => updateSession(session.id, { end: event.target.value })} /><input value={session.location} placeholder="Location" aria-label={`${session.label} location`} onChange={(event) => updateSession(session.id, { location: event.target.value })} /><button onClick={() => { setSessions((current) => current.filter((item) => item.id !== session.id)); setTasks((current) => current.map((task) => task.sessionId === session.id ? { ...task, sessionId: "" } : task)); }} aria-label={`Remove ${session.label}`}>×</button></article>)}</div></section><section className="prep-panel prep-tasks"><div className="form-section-head"><div><h3>Prep checklist</h3><p>This becomes the working mini-compendium for the prep team.</p></div><button onClick={() => setTasks((current) => [...current, { id: `prep-task-${Date.now()}`, label: "New prep task", done: false, ownerPersonId: "", sessionId: sessions[0]?.id ?? "", notes: "" }])}>+ Add task</button></div><div className="prep-task-list">{tasks.map((task) => <article className={task.done ? "done" : ""} key={task.id}><input type="checkbox" checked={task.done} aria-label={`Mark ${task.label} complete`} onChange={(event) => updateTask(task.id, { done: event.target.checked })} /><div><input value={task.label} aria-label="Task" onChange={(event) => updateTask(task.id, { label: event.target.value })} /><input value={task.notes} placeholder="Instructions or items needed" aria-label={`${task.label} notes`} onChange={(event) => updateTask(task.id, { notes: event.target.value })} /></div><select value={task.ownerPersonId} aria-label={`${task.label} owner`} onChange={(event) => updateTask(task.id, { ownerPersonId: event.target.value })}><option value="">No owner</option>{data.people.map((person) => <option value={person.id} key={person.id}>{person.name}</option>)}</select><select value={task.sessionId} aria-label={`${task.label} session`} onChange={(event) => updateTask(task.id, { sessionId: event.target.value })}><option value="">No session</option>{sessions.map((session) => <option value={session.id} key={session.id}>{session.label}</option>)}</select><button onClick={() => setTasks((current) => current.filter((item) => item.id !== task.id))} aria-label={`Remove ${task.label}`}>×</button></article>)}</div></section></div><section className="prep-panel prep-availability"><div className="form-section-head"><div><h3>Prep availability</h3><p>Click a cell to cycle through available, conditional, and unavailable.</p></div></div>{sessions.length ? <div className="availability-scroll"><div className="prep-availability-grid" style={{ "--prep-columns": sessions.length } as React.CSSProperties}><div className="availability-corner">Exec</div>{sessions.map((session) => <div className="availability-head" key={session.id}><strong>{session.label}</strong><small>{session.date || "Date TBD"} · {session.start}</small></div>)}{data.people.map((person) => <div className="availability-row" key={person.id}><div className="availability-person"><PersonAvatar person={person} small /><div><strong>{person.name}</strong><small>{person.team}</small></div></div>{sessions.map((session) => { const status = availability[person.id]?.[session.id] ?? "available"; return <button key={session.id} className={`availability-block ${status}`} onClick={() => cycleAvailability(person.id, session.id)}><span>{status === "available" ? "✓" : status === "conditional" ? "~" : "×"}</span></button>; })}</div>)}</div></div> : <p className="empty-copy">Add a prep session to collect availability.</p>}</section></div>;
 }
 
-function PeopleView({ data, activeDay, dayId, setDayId, onManageRoster, onShareAvailability, onEditProfile }: { data: EventState; activeDay: EventDay; dayId: string; setDayId: (id: string) => void; onManageRoster: () => void; onShareAvailability: () => void; onEditProfile: (personId: string) => void }) {
+function PeopleView({ data, activeDay, dayId, setDayId, onManageRoster, onAvailability, onEditProfile }: { data: EventState; activeDay: EventDay; dayId: string; setDayId: (id: string) => void; onManageRoster: () => void; onAvailability: (personId: string, blockId: string) => void; onEditProfile: (personId: string) => void }) {
   return <div className="content"><div className="section-title compact"><div><span className="kicker">People</span><h2>Exec roster and availability</h2><p>Responses are collected by time and mapped automatically to the current schedule blocks.</p></div><DayToggle data={data} dayId={dayId} setDayId={setDayId} /></div>
-    <div className="people-summary"><div><strong>{data.people.length}</strong><span>execs on this event</span></div><div><strong>{data.groups.length}</strong><span>teams</span></div><div className="people-actions"><button className="button secondary" onClick={onShareAvailability}>Share availability</button><button className="button primary" onClick={onManageRoster}>Manage roster + teams</button></div></div>
-    <section className="availability-card"><div className="availability-scroll"><div className="availability-grid" style={{ "--columns": activeDay.blocks.length } as React.CSSProperties}><div className="availability-corner">Exec</div>{activeDay.blocks.map((block) => <div className="availability-head" key={block.id}><strong>{block.short}</strong><small>{block.start}–{block.end}</small></div>)}{data.people.map((person) => <div className="availability-row" key={person.id}><div className="availability-person"><PersonAvatar person={person} small /><div><strong>{person.name}</strong><small>{person.team}</small></div></div>{activeDay.blocks.map((block) => { const status = person.availability[activeDay.id]?.[block.id] ?? "unavailable"; const label = status === "available" ? "Free for the full block" : status === "conditional" ? "Free for part of the block" : "Not free for this block"; return <div key={block.id} className={`availability-block ${status}`} title={`${block.label}: ${label}`} aria-label={`${person.name}, ${block.label}: ${label}`}><span>{status === "available" ? "✓" : status === "conditional" ? "~" : "×"}</span></div>; })}</div>)}</div></div></section>
+    <div className="people-summary"><div><strong>{data.people.length}</strong><span>execs on this event</span></div><div><strong>{data.groups.length}</strong><span>teams</span></div><div className="people-actions"><button className="button primary" onClick={onManageRoster}>Manage roster + teams</button></div></div>
+    <section className="availability-card"><div className="availability-scroll"><div className="availability-grid" style={{ "--columns": activeDay.blocks.length } as React.CSSProperties}><div className="availability-corner">Exec</div>{activeDay.blocks.map((block) => <div className="availability-head" key={block.id}><strong>{block.short}</strong><small>{block.start}–{block.end}</small></div>)}{data.people.map((person) => <div className="availability-row" key={person.id}><div className="availability-person"><PersonAvatar person={person} small /><div><strong>{person.name}</strong><small>{person.team}</small></div></div>{activeDay.blocks.map((block) => { const status = person.availability[activeDay.id]?.[block.id] ?? "unavailable"; const label = status === "available" ? "Free for the full block" : status === "conditional" ? "Free for part of the block" : "Not free for this block"; return <button type="button" key={block.id} className={`availability-block ${status}`} title={`${block.label}: ${label}. Click to change.`} aria-label={`${person.name}, ${block.label}: ${label}. Click to change.`} onClick={() => onAvailability(person.id, block.id)}><span>{status === "available" ? "✓" : status === "conditional" ? "~" : "×"}</span></button>; })}</div>)}</div></div></section>
     <section className="profile-notes"><div className="subhead"><div><span className="kicker">Reusable knowledge</span><h3>Preferences and private notes</h3></div></div><div className="profile-grid">{data.people.map((person) => <article key={person.id}><div className="profile-title"><PersonAvatar person={person} /><div><h4>{person.name}</h4><p>{person.team}</p></div><button onClick={() => onEditProfile(person.id)}>Edit</button></div><div className="tag-row">{person.preferences.length ? person.preferences.map((preference) => <span key={preference}>{preference}</span>) : <span>No preferences yet</span>}</div><p className="private-note"><b>Private</b>{person.privateNote || "No private notes yet."}</p></article>)}</div></section>
   </div>;
 }
@@ -1872,26 +1944,8 @@ function RoleEditor({ data, day, editor, roleTemplates, onClose, onSave, onRemov
   </div>;
 }
 
-function AvailabilityTimeGrid({ data, person, onToggle }: { data: EventState; person: Person; onToggle: (dayId: string, slotKey: string) => void }) {
-  const slotsByDay = new Map(data.days.map((day) => [day.id, getAvailabilitySlots(day)]));
-  const allSlots = Array.from(new Map(data.days.flatMap((day) => (slotsByDay.get(day.id) ?? []).map((slot) => [slot.key, slot]))).values()).sort((a, b) => a.start - b.start);
-  if (!allSlots.length) return <section className="empty-builder availability-empty"><h3>No event times yet</h3><p>The availability grid will appear once the schedule has a start and end time.</p></section>;
-  return <section className="availability-time-card"><div className="availability-time-legend"><span><i />Free</span><small>Select every 30-minute time you can be there. Schedule blocks are matched automatically.</small></div><div className="availability-time-scroll"><div className="availability-time-grid" style={{ "--time-columns": allSlots.length } as React.CSSProperties}><div className="availability-time-corner">Event day</div>{allSlots.map((slot) => <div className="availability-time-head" key={slot.key}>{slot.label}</div>)}{data.days.map((availabilityDay) => { const daySlots = slotsByDay.get(availabilityDay.id) ?? []; const validKeys = new Set(daySlots.map((slot) => slot.key)); return <div className="availability-time-row" key={availabilityDay.id}><div className="availability-time-day"><strong>{availabilityDay.label}</strong><span>{availabilityDay.date.replace(/^[A-Za-z]+, /, "")}</span></div>{allSlots.map((slot) => { const enabled = validKeys.has(slot.key); const free = person.availabilitySlots?.[availabilityDay.id]?.[slot.key] === true; const label = `${availabilityDay.label}, ${slot.label} to ${slot.endLabel}`; return enabled ? <button type="button" key={slot.key} className={free ? "free" : ""} aria-label={`${label}: ${free ? "free" : "not free"}`} aria-pressed={free} onClick={() => onToggle(availabilityDay.id, slot.key)}><span>{free ? "✓" : ""}</span></button> : <span className="outside-hours" key={slot.key} aria-hidden="true" />; })}</div>; })}</div></div></section>;
-}
-
-function ExecView({ data, person, dayId, setDayId, section, setSection, onAvailability, onPrepAvailability, onPersonChange, onExit }: { data: EventState; person: Person; dayId: string; setDayId: (id: string) => void; section: ExecSection; setSection: (section: ExecSection) => void; onAvailability: (personId: string, dayId: string, slotKey: string) => void; onPrepAvailability: (personId: string, sessionId: string) => void; onPersonChange: (personId: string) => void; onExit: () => void }) {
+function PublishedExecView({ data, person, dayId, setDayId, onPersonChange, onExit }: { data: EventState; person: Person; dayId: string; setDayId: (id: string) => void; onPersonChange: (personId: string) => void; onExit: () => void }) {
   const day = data.days.find((item) => item.id === dayId) ?? data.days[0];
-  const publication = getPublicationStatus(data.publishedAt);
-  const assignments = day.assignments.filter((assignment) => assignment.personId === person.id);
-  const next = assignments[0];
-  const nextBlock = day.blocks.find((block) => block.id === next?.blockId);
-  const eventRoles = data.days.flatMap((eventDay) => eventDay.blocks.flatMap((block) => blockRoles(block).map((role) => ({ role, block: `${eventDay.label} · ${block.label}` })))).filter((entry, index, entries) => entries.findIndex((item) => item.role.name === entry.role.name) === index);
-  return <div className="exec-app"><header className="exec-header"><button className="exec-brand" onClick={() => setSection("today")}><span>R</span> relay</button><div><button className="icon-button" aria-label="Notifications">•<span /></button><button className="exec-profile"><PersonAvatar person={person} /><span>{person.name}</span></button><button className="exit-preview" onClick={onExit}>Exit preview</button></div></header><main>
-    {section === "today" && <><section className="exec-welcome"><div><span className="kicker">Good morning, {person.name}</span><h1>My day</h1><p>{day.date} · {data.venue}</p></div><DayToggle data={data} dayId={dayId} setDayId={setDayId} /></section>{next && nextBlock ? <section className="next-card"><div className="next-time"><span>NEXT UP</span><strong>{nextBlock.start}</strong><small>{nextBlock.end}</small></div><div className="next-main"><span className="role-label" style={{ background: next.color || roleColor(next.role) }}>{next.role}</span><h2>{nextBlock.label}</h2>{assignmentPlaceAndLead(nextBlock, next, data.people) ? <p className="next-place">{assignmentPlaceAndLead(nextBlock, next, data.people)}</p> : null}<p>{next.description}</p><div className="next-people"><span>With</span>{day.assignments.filter((a) => a.blockId === next.blockId && a.blockRoleId === next.blockRoleId && a.personId !== person.id).slice(0, 3).map((a) => <PersonAvatar key={a.id} small person={data.people.find((p) => p.id === a.personId)!} />)}</div></div><button className="acknowledge">✓ I’m ready</button></section> : null}<section className="my-day"><div className="subhead"><div><span className="kicker">Itinerary</span><h3>{assignments.length} roles today</h3></div><button className="text-button" onClick={() => setSection("schedule")}>Whole event →</button></div><div className="itinerary">{assignments.map((assignment, index) => { const block = day.blocks.find((item) => item.id === assignment.blockId)!; const details = assignmentPlaceAndLead(block, assignment, data.people).replace(/^⌖ /, ""); return <article key={assignment.id} className={index === 0 ? "current" : ""}><div className="itinerary-time"><strong>{block.start}</strong><span>{block.end}</span></div><i style={{ background: assignment.color || roleColor(assignment.role) }} /><div><span>{block.label}</span><h4>{assignment.role}</h4>{details ? <p>{details}</p> : null}</div><button aria-label={`Open ${assignment.role}`}>→</button></article>; })}</div></section><section className="quick-links"><div className="subhead"><div><span className="kicker">Event overview</span><h3>Day-of links</h3></div><button className="text-button" onClick={() => setSection("overview")}>View all →</button></div><div>{data.resources.filter((resource) => resource.dayOf && resource.url).slice(0, 4).map((resource) => <a href={resource.url} key={resource.id}><span>{resource.group.slice(0, 2).toUpperCase()}</span><strong>{resource.label}</strong><b>↗</b></a>)}</div></section></>}
-    {section === "schedule" && <section className="exec-full-schedule"><span className="kicker">{publication.scheduleLabel}</span><h1>Event schedule</h1><p>Every block, role, and assignment.</p>{data.days.map((scheduleDay) => <section className="exec-schedule-day" key={scheduleDay.id}><header><span>{scheduleDay.label}</span><h2>{scheduleDay.date}</h2></header><div>{scheduleDay.blocks.map((block) => { const assignmentsForBlock = scheduleDay.assignments.filter((assignment) => assignment.blockId === block.id); return <article key={block.id}><div className="full-schedule-time" style={{ background: block.color }}><strong>{block.start}</strong><span>{block.end}</span></div><div className="full-schedule-main"><span>{block.location || "Location not set"}</span><h3>{block.label}</h3><div className="full-role-list">{blockRoles(block).map((role) => { const roleAssignments = assignmentsForBlock.filter((assignment) => assignment.blockRoleId === role.id); const lead = data.people.find((item) => item.id === role.leadPersonId); return <div key={role.id}><strong>{role.name}</strong>{lead ? <span>Lead: {lead.name}</span> : null}<small>{roleAssignments.map((assignment) => data.people.find((item) => item.id === assignment.personId)?.name).filter(Boolean).join(", ") || "Team not assigned"}</small></div>; })}</div></div></article>; })}</div></section>)}</section>}
-    {section === "prep" && <section className="exec-availability exec-prep"><span className="kicker">Before the event</span><h1>Prep compendium</h1><p>Choose your name, confirm when you can help, and review the tasks you own.</p><label className="availability-person-picker">I am<select value={person.id} onChange={(event) => onPersonChange(event.target.value)}>{data.people.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name} · {candidate.team}</option>)}</select></label><section className="availability-day"><header><span>Prep sessions</span><h2>Your availability</h2></header><div className="exec-availability-list">{data.prepSessions.map((session) => { const status = person.prepAvailability[session.id] ?? "available"; return <button className={status} key={session.id} onClick={() => onPrepAvailability(person.id, session.id)}><div><strong>{session.start}</strong><span>{session.end}</span></div><div><h3>{session.label}</h3><p>{session.date || "Date TBD"}{session.location ? ` · ${session.location}` : ""}</p></div><b>{status === "available" ? "Available" : status === "conditional" ? "Conditional" : "Unavailable"}</b></button>; })}</div></section><section className="exec-prep-tasks"><header><span>My checklist</span><h2>Prep responsibilities</h2></header>{data.prepTasks.filter((task) => task.ownerPersonId === person.id).map((task) => <article key={task.id} className={task.done ? "done" : ""}><span>{task.done ? "✓" : "○"}</span><div><strong>{task.label}</strong><p>{task.notes || "No extra instructions."}</p></div><small>{data.prepSessions.find((session) => session.id === task.sessionId)?.label ?? "Any session"}</small></article>)}{!data.prepTasks.some((task) => task.ownerPersonId === person.id) ? <p className="empty-copy">No prep tasks assigned to you yet.</p> : null}</section></section>}
-    {section === "availability" && <section className="exec-availability"><span className="kicker">Your availability</span><h1>When are you free?</h1><p>Choose your name, then select the times you can be there. Your free time stays intact even if the schedule blocks change, and changes save automatically.</p><label className="availability-person-picker">I am<select value={person.id} onChange={(event) => onPersonChange(event.target.value)}>{data.people.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name} · {candidate.team}</option>)}</select></label><AvailabilityTimeGrid data={data} person={person} onToggle={(availabilityDayId, slotKey) => onAvailability(person.id, availabilityDayId, slotKey)} /></section>}
-    {section === "overview" && <section className="exec-overview"><span className="kicker">Shared reference</span><h1>Event overview</h1><p>Day-of essentials and the complete resource library for {data.eventName}.</p><div className="overview-grid"><section className="overview-panel"><header><span>↗</span><div><h3>Day-of essentials</h3><p>{data.resources.filter((resource) => resource.dayOf && resource.url).length} ready links</p></div></header><div className="overview-group">{data.resources.filter((resource) => resource.dayOf && resource.url).map((resource) => <a href={resource.url} key={resource.id}><span>{resource.label}</span><b>Open ↗</b></a>)}</div></section><section className="overview-panel"><header><span>☎</span><div><h3>Important people</h3><p>{data.contacts.length} contacts</p></div></header><div className="contact-list">{data.contacts.map((contact) => <a href={`tel:${contact.phone}`} key={contact.id}><div><strong>{contact.name}</strong><span>{contact.role}</span></div><b>{contact.phone}</b></a>)}</div></section></div><section className="overview-panel event-library-panel"><header><span>≡</span><div><h3>Complete event library</h3><p>Planning and reference links</p></div></header>{Array.from(new Set(data.resources.filter((resource) => !resource.dayOf && resource.url).map((resource) => resource.group))).map((group) => <div className="overview-group" key={group}><h4>{group}</h4>{data.resources.filter((resource) => !resource.dayOf && resource.url && resource.group === group).map((resource) => <a href={resource.url} key={resource.id}><span>{resource.label}</span><b>Open ↗</b></a>)}</div>)}</section></section>}
-    {section === "directory" && <section className="exec-directory"><span className="kicker">Role directory</span><h1>Role instructions</h1><p>Instructions from the {publication.scheduleLabel.toLowerCase()}.</p><div className="directory-list">{eventRoles.map(({ role, block }) => { const lead = data.people.find((item) => item.id === role.leadPersonId); return <details key={role.name}><summary><i style={{ background: blockRoleColor(role) }} /><span>{role.name}</span><b>+</b></summary><p>{role.description}{lead ? ` Lead: ${lead.name}.` : ""} First used in {block}.</p></details>; })}</div>{!eventRoles.length ? <p>No roles have been added to the schedule yet.</p> : null}</section>}
-  </main><nav className="exec-nav" aria-label="Exec navigation">{(["today", "schedule", "prep", "availability", "overview", "directory"] as ExecSection[]).map((item) => <button key={item} className={section === item ? "active" : ""} onClick={() => setSection(item)}><span>{item === "today" ? "◷" : item === "schedule" ? "▤" : item === "prep" ? "◇" : item === "availability" ? "▦" : item === "overview" ? "↗" : "≡"}</span>{item === "today" ? "My day" : item[0].toUpperCase() + item.slice(1)}</button>)}</nav></div>;
+  const assignments = day?.assignments.filter((assignment) => assignment.personId === person.id) ?? [];
+  return <div className="exec-app"><header className="exec-header"><div className="exec-brand"><span>R</span> relay</div><div><label className="exec-profile exec-profile-picker"><PersonAvatar person={person} /><select aria-label="Viewing published roles for" value={person.id} onChange={(event) => onPersonChange(event.target.value)}>{data.people.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}</select></label><button className="exit-preview" onClick={onExit}>Back to portal</button></div></header><main><section className="exec-welcome"><div><span className="kicker">Exec view</span><h1>{person.name}’s roles</h1><p>{data.eventName} · {day?.date} · {data.venue}</p></div><DayToggle data={data} dayId={dayId} setDayId={setDayId} /></section><section className="my-day"><div className="subhead"><div><span className="kicker">Assigned roles</span><h3>{assignments.length} role{assignments.length === 1 ? "" : "s"} on {day?.label}</h3></div></div><div className="itinerary">{assignments.map((assignment) => { const block = day.blocks.find((item) => item.id === assignment.blockId)!; const details = assignmentPlaceAndLead(block, assignment, data.people).replace(/^⌖ /, ""); const teammates = day.assignments.filter((candidate) => candidate.blockId === assignment.blockId && candidate.blockRoleId === assignment.blockRoleId && candidate.personId !== person.id).map((candidate) => data.people.find((member) => member.id === candidate.personId)?.name).filter(Boolean); return <article key={assignment.id}><div className="itinerary-time"><strong>{block.start}</strong><span>{block.end}</span></div><i style={{ background: assignment.color || roleColor(assignment.role) }} /><div><span>{block.label}</span><h4>{assignment.role}</h4>{details ? <p>{details}</p> : null}<p>{assignment.description || "No additional instructions."}</p>{teammates.length ? <p>With {teammates.join(", ")}</p> : null}</div></article>; })}{!assignments.length ? <p className="empty-copy">No roles are assigned to {person.name} on {day?.label}.</p> : null}</div></section></main></div>;
 }

@@ -3,8 +3,9 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("ships Relay product metadata and schedule-first role assignment", async () => {
-  const [page, layout, workspace, styles, roleApi, schema] = await Promise.all([
+  const [page, adminPage, layout, workspace, styles, roleApi, schema] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/admin/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/relay-workspace.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
@@ -12,13 +13,23 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
   ]);
 
-  assert.match(page, /RelayWorkspace/);
-  assert.match(page, /Event operations, in sync/);
+  assert.match(adminPage, /RelayWorkspace/);
+  assert.match(adminPage, /initialMode=\{view === "exec" \? "exec" : "director"\}/);
+  assert.match(page, /redirect\("\/admin\/sign-in"\)/);
+  assert.doesNotMatch(page, /Open Relay portal/);
   assert.match(layout, /Relay — Event operations, in sync/);
   assert.match(workspace, /Import from Google Docs/);
   assert.match(workspace, /Exec roster and teams/);
-  assert.match(workspace, /Share availability/);
-  assert.match(workspace, /When are you free/);
+  assert.match(workspace, /Click to change/);
+  assert.match(workspace, /WORKSPACE_MODE_KEY/);
+  assert.match(workspace, /localStorage\.setItem\(WORKSPACE_MODE_KEY, "exec"\)/);
+  assert.match(workspace, /localStorage\.removeItem\(WORKSPACE_MODE_KEY\)/);
+  assert.match(workspace, /searchParams\.set\("view", "exec"\)/);
+  assert.match(workspace, /searchParams\.delete\("view"\)/);
+  assert.match(workspace, /Loading Exec View/);
+  assert.match(workspace, /void fetchPublishedEvent\(requestedEventId\)/);
+  assert.match(workspace, /setExecViewUrl\(true, published\.eventId\)/);
+  assert.match(workspace, /Viewing published roles for/);
   assert.match(workspace, /mapped automatically to the current schedule blocks/);
   assert.match(workspace, /Preferences and private notes/);
   assert.match(workspace, /Role library/);
@@ -40,7 +51,9 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.match(workspace, /aria-describedby=\{dayCount\.error/);
   assert.doesNotMatch(workspace, /setDayCount\(Math\.max/);
   assert.doesNotMatch(workspace, /Build the flow, keep the judgment/);
-  assert.match(workspace, /Preview as exec/);
+  assert.match(workspace, /Exec view/);
+  assert.match(workspace, /<span>01<\/span>\{loadingPublished/);
+  assert.doesNotMatch(workspace, /When are you free/);
   assert.match(workspace, /Collapse navigation/);
   assert.match(workspace, /data\.draftChanges.*ahead/);
   assert.match(workspace, /Unlocked/);
@@ -127,5 +140,5 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.match(schema, /color:\s*text\("color"\)/);
   assert.match(schema, /normalizedName:\s*text\("normalized_name"\)/);
   assert.match(schema, /revision:\s*integer\("revision"\)/);
-  assert.doesNotMatch(`${page}${layout}${workspace}`, /codex-preview|SkeletonPreview/);
+  assert.doesNotMatch(`${page}${adminPage}${layout}${workspace}`, /codex-preview|SkeletonPreview/);
 });

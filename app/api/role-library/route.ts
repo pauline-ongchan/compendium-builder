@@ -1,4 +1,5 @@
 import { asc, eq, isNull, sql } from "drizzle-orm";
+import { requirePortalApi } from "../../../auth";
 import { ensureDb, getDb } from "../../../db";
 import { eventStates, roleTemplates } from "../../../db/schema";
 import { normalizeRoleName, replaceRoleTemplateSource } from "../../role-library";
@@ -13,6 +14,8 @@ const roleFields = {
 };
 
 export async function GET() {
+  const authorization = await requirePortalApi();
+  if ("response" in authorization) return authorization.response;
   try {
     await ensureDb();
     const roles = await getDb().select(roleFields).from(roleTemplates).where(isNull(roleTemplates.mergedIntoId)).orderBy(asc(roleTemplates.name));
@@ -23,6 +26,8 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
+  const authorization = await requirePortalApi();
+  if ("response" in authorization) return authorization.response;
   try {
     const role = await request.json();
     if (!role || typeof role.id !== "string" || typeof role.name !== "string" || !role.name.trim()) {
@@ -37,7 +42,7 @@ export async function PUT(request: Request) {
       return Response.json({ error: `A role named ${duplicate.name} already exists.`, existing: duplicate }, { status: 409 });
     }
     const targetId = duplicate?.id ?? role.id;
-    const updatedBy = request.headers.get("oai-authenticated-user-email") ?? "local-director";
+    const updatedBy = authorization.email;
     const color = typeof role.color === "string" && /^#[0-9a-f]{6}$/i.test(role.color) ? role.color : "#d8d2ef";
     const [saved] = await db.insert(roleTemplates).values({
       id: targetId,
@@ -67,6 +72,8 @@ export async function PUT(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const authorization = await requirePortalApi();
+  if ("response" in authorization) return authorization.response;
   try {
     const body = await request.json();
     if (body?.action !== "merge" || typeof body.sourceId !== "string" || typeof body.targetId !== "string" || body.sourceId === body.targetId) {
@@ -102,6 +109,8 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  const authorization = await requirePortalApi();
+  if ("response" in authorization) return authorization.response;
   try {
     const id = new URL(request.url).searchParams.get("id");
     if (!id) return Response.json({ error: "Role template ID is required" }, { status: 400 });

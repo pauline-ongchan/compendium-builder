@@ -14,8 +14,8 @@ export async function publishEventState<T extends PublishableEventState>(
   publishedAt = "Just now",
 ): Promise<T> {
   const next = { ...state, draftChanges: 0, publishedAt };
-  const response = await request("/api/event-state", {
-    method: "PUT",
+  const response = await request("/api/event-state/publish", {
+    method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(next),
   });

@@ -15,13 +15,14 @@ function createDb() {
 }
 
 let database: ReturnType<typeof createDb> | null = null;
+let databaseSetup: Promise<void> | null = null;
 
 export function getDb() {
   database ??= createDb();
   return database;
 }
 
-export async function ensureDb() {
+async function initializeDb() {
   const db = getDb();
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS event_states (
@@ -79,4 +80,27 @@ export async function ensureDb() {
       END IF;
     END $$
   `);
+  await db.execute(sql`ALTER TABLE event_states ADD COLUMN IF NOT EXISTS published_payload TEXT`);
+  await db.execute(sql`ALTER TABLE event_states ADD COLUMN IF NOT EXISTS share_token TEXT`);
+  await db.execute(sql`ALTER TABLE event_states ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ`);
+  await db.execute(sql`ALTER TABLE event_states ADD COLUMN IF NOT EXISTS published_by TEXT`);
+  await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS event_states_share_token_unique ON event_states (share_token)`);
+  await db.execute(sql`
+    UPDATE event_states
+    SET published_payload = payload,
+        published_at = updated_at,
+        published_by = updated_by
+    WHERE published_payload IS NULL
+      AND LOWER(COALESCE(payload::jsonb ->> 'publishedAt', '')) NOT IN ('', 'not published')
+  `);
+}
+
+export function ensureDb() {
+  if (!databaseSetup) {
+    databaseSetup = initializeDb().catch((error) => {
+      databaseSetup = null;
+      throw error;
+    });
+  }
+  return databaseSetup;
 }
