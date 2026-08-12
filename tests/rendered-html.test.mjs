@@ -43,6 +43,9 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.doesNotMatch(workspace, /execs available to schedule/);
   assert.match(workspace, /Delete selected/);
   assert.match(workspace, /removes their assignments from every event/);
+  assert.match(workspace, /Delete team \$\{group\.name\}/);
+  assert.match(workspace, /no execs or assignments will be deleted/);
+  assert.match(workspace, /next\.groups = structuredClone\(groups\)/);
   assert.match(workspace, /if \(data\.prepEnabled\) visibleDirectorSections\.push\(\["prep", "Prep"\]\)/);
   assert.match(workspace, /if \(data\.judgingEnabled\) visibleDirectorSections\.push\(\["judging", "Judging rooms"\]\)/);
   assert.match(workspace, /Judging rooms/);
