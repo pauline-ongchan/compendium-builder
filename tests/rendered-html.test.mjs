@@ -19,7 +19,7 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.doesNotMatch(page, /Open Relay portal/);
   assert.match(layout, /Relay — Event operations, in sync/);
   assert.match(workspace, /Import from Google Docs/);
-  assert.match(workspace, /Exec roster and teams/);
+  assert.match(workspace, /Universal exec roster/);
   assert.match(workspace, /Click to change/);
   assert.match(workspace, /WORKSPACE_MODE_KEY/);
   assert.match(workspace, /localStorage\.setItem\(WORKSPACE_MODE_KEY, "exec"\)/);
@@ -30,8 +30,12 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.match(workspace, /void fetchPublishedEvent\(requestedEventId\)/);
   assert.match(workspace, /setExecViewUrl\(true, published\.eventId\)/);
   assert.match(workspace, /Viewing published roles for/);
-  assert.match(workspace, /mapped automatically to the current schedule blocks/);
-  assert.match(workspace, /Preferences and private notes/);
+  assert.match(workspace, /maps automatically to schedule blocks/);
+  assert.doesNotMatch(workspace, /Preferences and private notes/);
+  assert.match(workspace, /Roster, prep \+ modules/);
+  assert.doesNotMatch(workspace, />\+ New event<\/button>/);
+  assert.doesNotMatch(workspace, /Load standard template/);
+  assert.match(workspace, /\+ Add new category/);
   assert.match(workspace, /Role library/);
   assert.doesNotMatch(workspace, /Add from library/);
   assert.match(workspace, /Event modules/);
