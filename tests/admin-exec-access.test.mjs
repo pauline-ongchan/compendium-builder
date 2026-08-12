@@ -77,7 +77,7 @@ test("portal writes are guarded and exec view reads a separate published snapsho
     readFile(new URL("../app/api/role-library/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/google-doc-import/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
-    readFile(new URL("../migrations/0002_admin_exec_access.sql", import.meta.url), "utf8"),
+    readFile(new URL("../migrations/0003_admin_exec_access.sql", import.meta.url), "utf8"),
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
   ]);
 
