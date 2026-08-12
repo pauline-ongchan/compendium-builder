@@ -133,6 +133,8 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.match(styles, /\.block-head\.assignment-ready\s*\{[^}]*position:\s*sticky;[^}]*top:\s*40px/);
   assert.match(styles, /\.workspace-header\s*\{[^}]*position:\s*relative/);
   assert.match(styles, /\.sidebar-collapsed \.workspace\s*\{[^}]*margin-left:\s*72px/);
+  assert.match(styles, /\.sidebar-bottom > button\s*\{[^}]*gap:\s*11px/);
+  assert.match(styles, /\.sidebar-bottom > button span\s*\{[^}]*font-size:\s*15px/);
   assert.match(styles, /\.checks-table-row\s*\{/);
   assert.match(styles, /\.board-card\.focused\s*\{[^}]*position:\s*fixed;[^}]*inset:\s*0/);
   assert.match(styles, /schedule-focus-active \.drawer-backdrop\s*\{[^}]*z-index:\s*90/);
