@@ -31,6 +31,8 @@ function withMetadata(payload: Record<string, unknown>, record: typeof eventStat
       updatedBy: record.updatedBy,
       publishedAt: record.publishedAt,
       publishedBy: record.publishedBy,
+      archivedAt: record.archivedAt,
+      archivedBy: record.archivedBy,
     },
   };
 }
@@ -43,6 +45,7 @@ export async function GET() {
     await ensureDb();
     const records = await getDb().select().from(eventStates).orderBy(desc(eventStates.updatedAt)).limit(50);
     const states = [];
+    const archivedStates = [];
     for (const original of records) {
       let record = original;
       if (!record.shareToken) {
@@ -50,11 +53,52 @@ export async function GET() {
         await getDb().update(eventStates).set({ shareToken }).where(eq(eventStates.id, record.id));
         record = { ...record, shareToken };
       }
-      states.push(withMetadata(JSON.parse(record.payload), record));
+      const state = withMetadata(JSON.parse(record.payload), record);
+      if (record.archivedAt) archivedStates.push(state);
+      else states.push(state);
     }
-    return Response.json({ states, state: states[0] ?? null });
+    return Response.json({ states, archivedStates, state: states[0] ?? null });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Unable to load event" }, { status: 500 });
+  }
+}
+
+export async function PATCH(request: Request) {
+  const authorization = await requirePortalApi();
+  if ("response" in authorization) return authorization.response;
+
+  try {
+    const body = await request.json() as { eventId?: unknown; archived?: unknown };
+    if (typeof body.eventId !== "string" || typeof body.archived !== "boolean") {
+      return Response.json({ error: "An event ID and archive status are required" }, { status: 400 });
+    }
+    await ensureDb();
+    const existing = await getDb().select().from(eventStates).where(eq(eventStates.id, body.eventId)).limit(1);
+    if (!existing[0]) return Response.json({ error: "Event not found" }, { status: 404 });
+    const archivedAt = body.archived ? new Date().toISOString() : null;
+    const archivedBy = body.archived ? authorization.email : null;
+    await getDb().update(eventStates).set({ archivedAt, archivedBy }).where(eq(eventStates.id, body.eventId));
+    const record = (await getDb().select().from(eventStates).where(eq(eventStates.id, body.eventId)).limit(1))[0];
+    return Response.json({ ok: true, state: withMetadata(JSON.parse(record.payload), record) });
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "Unable to update event archive status" }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: Request) {
+  const authorization = await requirePortalApi();
+  if ("response" in authorization) return authorization.response;
+
+  try {
+    const eventId = new URL(request.url).searchParams.get("event");
+    if (!eventId) return Response.json({ error: "An event ID is required" }, { status: 400 });
+    await ensureDb();
+    const existing = await getDb().select({ id: eventStates.id }).from(eventStates).where(eq(eventStates.id, eventId)).limit(1);
+    if (!existing[0]) return Response.json({ error: "Event not found" }, { status: 404 });
+    await getDb().delete(eventStates).where(eq(eventStates.id, eventId));
+    return Response.json({ ok: true, eventId });
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "Unable to delete event" }, { status: 500 });
   }
 }
 

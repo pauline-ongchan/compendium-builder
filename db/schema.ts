@@ -11,6 +11,8 @@ export const eventStates = pgTable("event_states", {
   updatedBy: text("updated_by"),
   publishedAt: timestamp("published_at", { withTimezone: true, mode: "string" }),
   publishedBy: text("published_by"),
+  archivedAt: timestamp("archived_at", { withTimezone: true, mode: "string" }),
+  archivedBy: text("archived_by"),
 });
 
 export const roleTemplates = pgTable("role_templates", {
