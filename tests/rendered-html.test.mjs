@@ -162,6 +162,8 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.match(styles, /\.role-match-list article/);
   assert.match(styles, /\.assignment-role-picker\s*\{[^}]*position:\s*fixed/);
   assert.match(styles, /\.setup-dialog\.confirm-dialog/);
+  assert.match(styles, /\.confirm-dialog-body\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*38px minmax\(0, 1fr\)/);
+  assert.match(styles, /\.confirm-dialog-body > span\s*\{[^}]*width:\s*38px;[^}]*place-items:\s*center/);
   assert.match(styles, /\.delete-block\s*\{[^}]*top:\s*39px/);
   assert.doesNotMatch(workspace, /className="stat-strip"/);
   assert.doesNotMatch(workspace, /level:\s*"Lead"|level:\s*"Workload"/);

@@ -718,6 +718,11 @@ button { color: inherit; }
 .setup-dialog > header p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .setup-dialog > header > button { width: 32px; height: 32px; border: 1px solid var(--line); background: transparent; border-radius: 50%; font-size: 18px; cursor: pointer; }
 .setup-dialog > footer { padding: 14px 22px; border-top: 1px solid var(--ink); display: flex; justify-content: flex-end; gap: 8px; }
+.confirm-dialog-body { padding: 18px 22px; display: grid; grid-template-columns: 38px minmax(0, 1fr); align-items: center; gap: 12px; background: #fff8f5; }
+.confirm-dialog-body > span { width: 38px; height: 38px; border-radius: 50%; background: #f1d1cb; color: #7d3028; display: grid; place-items: center; font-family: var(--font-geist-mono); font-size: 16px; font-weight: 850; }
+.confirm-dialog-body strong, .confirm-dialog-body p { display: block; margin: 0; }
+.confirm-dialog-body strong { font-size: 11px; }
+.confirm-dialog-body p { margin-top: 4px; color: var(--muted); font-size: 9px; line-height: 1.5; }
 .checks-dialog-body { min-height: 260px; padding: 18px 22px; overflow-y: auto; }
 .checks-error { margin-bottom: 12px; padding: 12px 14px; border: 1px solid #b65d54; background: #fff0ed; color: #762b24; }
 .checks-error strong, .checks-error p { display: block; margin: 0; }
