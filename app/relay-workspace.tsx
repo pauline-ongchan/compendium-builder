@@ -15,7 +15,7 @@ import {
   slotsFromLegacyAvailability,
   type AvailabilityStatus,
 } from "./availability";
-import { publishEventState } from "./event-state-client";
+import { deleteEventState, publishEventState, setEventArchived } from "./event-state-client";
 import { parseScheduleTable } from "./schedule-import";
 import { getAssignmentAvailabilityChecks, getScheduleChecksViewState, type ScheduleCheck } from "./schedule-checks";
 import { getPublicationStatus } from "./publication-status";
@@ -36,7 +36,7 @@ function setExecViewUrl(active: boolean, eventId?: string) {
   } else url.searchParams.delete("view");
   window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
 }
-type RelayMeta = { shareToken: string | null; updatedAt: string | null; updatedBy: string | null; publishedAt: string | null; publishedBy: string | null };
+type RelayMeta = { updatedAt: string | null; updatedBy: string | null; publishedAt: string | null; publishedBy: string | null; archivedAt: string | null; archivedBy: string | null };
 
 type BlockLink = { id: string; label: string; url: string };
 type RoleTemplate = SharedRoleTemplate;
@@ -76,7 +76,6 @@ type ConfirmationRequest = {
   cancelLabel?: string;
   tone?: "warning" | "danger";
 };
-type ShareLink = { title: string; message: string; url: string };
 
 type EventBlock = {
   id: string;
@@ -155,6 +154,10 @@ type EventState = {
   judgingRooms: JudgingRoom[];
   relayMeta?: RelayMeta;
 };
+
+function isEventArchived(event: EventState) {
+  return Boolean(event.relayMeta?.archivedAt);
+}
 
 const roleDescriptions: Record<string, string> = {
   Materials: "Bring event materials from the club room, confirm quantities, and stage each item at its destination.",
@@ -642,6 +645,8 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
   const [roleRemoval, setRoleRemoval] = useState<{ dayId: string; blockId: string; blockRoleId: string } | null>(null);
   const [showNewEvent, setShowNewEvent] = useState(false);
   const [showEventLibrary, setShowEventLibrary] = useState(false);
+  const [eventLibraryView, setEventLibraryView] = useState<"active" | "archived">("active");
+  const [eventActionId, setEventActionId] = useState("");
   const [showScheduleImport, setShowScheduleImport] = useState(false);
   const [showRoleImport, setShowRoleImport] = useState(false);
   const [showRoster, setShowRoster] = useState(false);
@@ -658,7 +663,6 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
   const [loadingPublished, setLoadingPublished] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [confirmation, setConfirmation] = useState<ConfirmationRequest | null>(null);
-  const [shareLink, setShareLink] = useState<ShareLink | null>(null);
   const confirmationResolver = useRef<((confirmed: boolean) => void) | null>(null);
 
   const requestConfirmation = (request: ConfirmationRequest) => new Promise<boolean>((resolve) => {
@@ -716,10 +720,12 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
       fetch("/api/role-library").then((response) => response.ok ? response.json() : { roles: [] }),
     ])
       .then(([payload, rolePayload]) => {
-        const states = (payload.states ?? (payload.state ? [payload.state] : [])).map((state: EventState) => normalizeEvent(state));
+        const activeStates = (payload.states ?? (payload.state ? [payload.state] : [])).map((state: EventState) => normalizeEvent(state));
+        const archivedStates = (payload.archivedStates ?? []).map((state: EventState) => normalizeEvent(state));
+        const states = [...activeStates, ...archivedStates];
         const remoteRoles = (rolePayload.roles ?? []) as RoleTemplate[];
         if (states.length) {
-          const initial = states.find((state: EventState) => state.eventId === requestedEventId) ?? states[0];
+          const initial = activeStates.find((state: EventState) => state.eventId === requestedEventId) ?? activeStates[0] ?? archivedStates.find((state: EventState) => state.eventId === requestedEventId) ?? archivedStates[0];
           const mergedRoles = new Map<string, RoleTemplate>();
           const librarySources = remoteRoles.length ? [...builtInRoleTemplates, ...remoteRoles] : [...builtInRoleTemplates, ...initial.roleLibrary];
           for (const role of librarySources) {
@@ -736,6 +742,10 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
           }
           setBoardLocked(window.localStorage.getItem(`relay:v1:board-locked:${initial.eventId}`) === "true");
           setSelectedRoles({});
+          if (!activeStates.length) {
+            setEventLibraryView("archived");
+            setShowEventLibrary(true);
+          }
         }
       })
       .catch((error) => {
@@ -1457,19 +1467,6 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
     void save(next, "Prep mini-compendium updated.");
   };
 
-  const sharePrep = async () => {
-    if (!data.relayMeta?.shareToken) return showError("Save the event once before sharing prep.");
-    const url = new URL(`/exec/${data.relayMeta.shareToken}`, window.location.origin);
-    url.searchParams.set("view", "prep");
-    try {
-      await navigator.clipboard.writeText(url.toString());
-      setToast("Prep link copied. Send it to everyone helping before the event.");
-      window.setTimeout(() => setToast(""), 2400);
-    } catch {
-      setShareLink({ title: "Share prep", message: "Copy this link and send it to everyone helping before the event.", url: url.toString() });
-    }
-  };
-
   const startNewEvent = (values: { name: string; type: string; venue: string; startDate: string; dayCount: number }) => {
     const next = createBlankEvent(values, data.people);
     setShowNewEvent(false);
@@ -1489,6 +1486,78 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
     setSection("schedule");
     setBoardLocked(window.localStorage.getItem(`relay:v1:board-locked:${event.eventId}`) === "true");
     setSelectedRoles({});
+  };
+
+  const updateEventArchive = async (event: EventState, archived: boolean) => {
+    setEventActionId(event.eventId);
+    try {
+      const persisted = normalizeEvent(await setEventArchived<EventState>(event.eventId, archived));
+      const nextLibrary = eventLibrary.map((item) => item.eventId === persisted.eventId ? persisted : item);
+      setEventLibrary(nextLibrary);
+      setToastError(false);
+      setToast(archived ? `${event.eventName} archived.` : `${event.eventName} restored.`);
+      if (archived && data.eventId === event.eventId) {
+        const nextActive = nextLibrary.find((item) => !isEventArchived(item));
+        if (nextActive) switchEvent(nextActive);
+        else {
+          setData(persisted);
+          setEventLibraryView("archived");
+          setShowEventLibrary(true);
+        }
+      }
+      if (!archived) {
+        if (data.eventId === event.eventId) setData(persisted);
+        setEventLibraryView("active");
+      }
+      window.setTimeout(() => setToast(""), 2400);
+    } catch (error) {
+      showError(`${archived ? "Archive" : "Restore"} failed: ${error instanceof Error ? error.message : "Unable to update this event."}`);
+    } finally {
+      setEventActionId("");
+    }
+  };
+
+  const deleteEvent = async (event: EventState) => {
+    const confirmed = await requestConfirmation({
+      title: `Delete ${event.eventName}?`,
+      message: "This permanently removes the event, including its schedule, assignments, resources, and published snapshot. This cannot be undone.",
+      confirmLabel: "Delete event",
+      cancelLabel: "Keep event",
+      tone: "danger",
+    });
+    if (!confirmed) return;
+    setEventActionId(event.eventId);
+    try {
+      await deleteEventState(event.eventId);
+      window.localStorage.removeItem(`relay:v1:board-locked:${event.eventId}`);
+      window.localStorage.removeItem(execDayStorageKey(event.eventId));
+      window.localStorage.removeItem(`relay:v1:exec-person:${event.eventId}`);
+      const remaining = eventLibrary.filter((item) => item.eventId !== event.eventId);
+      setEventLibrary(remaining);
+      if (data.eventId === event.eventId) {
+        const nextActive = remaining.find((item) => !isEventArchived(item));
+        if (nextActive) switchEvent(nextActive);
+        else if (remaining[0]) {
+          setData(remaining[0]);
+          setDayId(remaining[0].days[0]?.id ?? "day1");
+          setSection("schedule");
+          setBoardLocked(window.localStorage.getItem(`relay:v1:board-locked:${remaining[0].eventId}`) === "true");
+          setSelectedRoles({});
+          setEventLibraryView("archived");
+          setShowEventLibrary(true);
+        } else {
+          setShowEventLibrary(false);
+          setShowNewEvent(true);
+        }
+      }
+      setToastError(false);
+      setToast(`${event.eventName} permanently deleted.`);
+      window.setTimeout(() => setToast(""), 2400);
+    } catch (error) {
+      showError(`Delete failed: ${error instanceof Error ? error.message : "Unable to delete this event."}`);
+    } finally {
+      setEventActionId("");
+    }
   };
 
   const cycleJudgingStatus = (roomId: string, slotIndex: number) => {
@@ -1522,7 +1591,7 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
           <aside className="sidebar">
             <button className="brand" onClick={() => setSection("schedule")} aria-label="Relay home"><span>R</span> relay</button>
             <button className="sidebar-collapse" onClick={() => setSidebarCollapsed((current) => !current)} aria-label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"} title={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"}>{sidebarCollapsed ? "›" : "‹"}</button>
-            <button className="event-mini" onClick={() => setShowEventLibrary(true)}><span className="event-mark">{data.eventName.slice(0, 2).toUpperCase()}</span><div><strong>{data.eventName}</strong><small>{data.dateRange}</small></div><span aria-hidden="true">⌄</span></button>
+            <button className="event-mini" onClick={() => { setEventLibraryView(isEventArchived(data) ? "archived" : "active"); setShowEventLibrary(true); }}><span className="event-mark">{data.eventName.slice(0, 2).toUpperCase()}</span><div><strong>{data.eventName}</strong><small>{data.dateRange}</small></div><span aria-hidden="true">⌄</span></button>
             <nav aria-label="Director workspace">
               <button onClick={() => void openExecView()} disabled={loadingPublished}><span>01</span>{loadingPublished ? "Loading exec view…" : "Exec view"}</button>
               {directorSections.map(([id, label, number]) => (
@@ -1538,7 +1607,7 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
             </header>
 
             {section === "schedule" && <ScheduleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} warnings={warnings} reviewTarget={scheduleReviewTarget} selectedRoles={selectedRoles} boardLocked={boardLocked} roleTemplates={roleTemplates} onToggleLock={toggleBoardLock} onSelectRole={toggleSelectedRole} onCell={changeAssignment} onAssignRole={assignBlockRoleToPerson} onEditInterval={(assignment) => setAssignmentIntervalEditor({ blockId: assignment.blockId, personId: assignment.personId, blockRoleId: assignment.blockRoleId, assignmentId: assignment.id })} onClearAssignment={clearAssignment} onMoveAssignment={moveAssignment} onAddRole={addScheduleRoleToBlock} onCreateRole={createAndAddRole} onEditRole={(blockId, blockRoleId) => setRoleEditor({ blockId, blockRoleId })} onRemoveRole={requestBlockRoleRemoval} onAssignRest={assignRestToOnCall} onAddBlock={() => setBlockEditor({})} onImport={() => setShowScheduleImport(true)} onEditBlock={(blockId) => setBlockEditor({ blockId })} onDuplicateBlock={duplicateBlock} onDeleteBlock={setDeleteBlockId} onReview={reviewScheduleCheck} onViewAll={() => setShowScheduleChecks(true)} />}
-            {section === "prep" && <PrepView data={data} onSave={savePrep} onShare={sharePrep} />}
+            {section === "prep" && <PrepView data={data} onSave={savePrep} />}
             {section === "people" && <PeopleView key={`${activeDay.id}-${activeDay.availabilityStart}-${activeDay.availabilityEnd}`} data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} onAvailability={toggleAvailabilitySlot} onWindowChange={saveAvailabilityWindow} />}
             {section === "roles" && <RolesView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} roleTemplates={roleTemplates} onOpen={(blockId, blockRoleId) => setRoleEditor({ blockId, blockRoleId })} onEditBlock={(blockId) => setBlockEditor({ blockId })} onAddRoleToBlock={addLibraryRoleToBlock} onCreateRole={() => setRoleTemplateEditor({})} onEditRole={(templateId) => setRoleTemplateEditor({ templateId })} onImport={() => setShowRoleImport(true)} />}
             {section === "judging" && <JudgingView data={data} onCycle={cycleJudgingStatus} />}
@@ -1554,8 +1623,8 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
             return block && person && role ? <AssignmentIntervalDialog day={activeDay} block={block} person={person} role={role} assignment={assignment} onClose={() => setAssignmentIntervalEditor(null)} onSave={(start, end) => { setAssignmentIntervalEditor(null); commitBlockRoleAssignment(block.id, person.id, role.id, { start, end }); }} /> : null;
           })() : null}
           {blockEditor && <BlockEditor day={activeDay} blockId={blockEditor.blockId} onClose={() => setBlockEditor(null)} onSave={saveBlock} />}
-          {showNewEvent && <NewEventDialog onClose={() => setShowNewEvent(false)} onCreate={startNewEvent} />}
-          {showEventLibrary && <EventLibraryDialog events={eventLibrary} currentId={data.eventId} onClose={() => setShowEventLibrary(false)} onSwitch={switchEvent} onNew={() => { setShowEventLibrary(false); setShowNewEvent(true); }} />}
+          {showNewEvent && <NewEventDialog canClose={eventLibrary.length > 0} onClose={() => setShowNewEvent(false)} onCreate={startNewEvent} />}
+          {showEventLibrary && <EventLibraryDialog events={eventLibrary} currentId={data.eventId} view={eventLibraryView} busyEventId={eventActionId} canClose={eventLibrary.some((event) => !isEventArchived(event))} onView={setEventLibraryView} onClose={() => setShowEventLibrary(false)} onSwitch={switchEvent} onArchive={(event) => void updateEventArchive(event, true)} onRestore={(event) => void updateEventArchive(event, false)} onDelete={(event) => void deleteEvent(event)} onNew={() => { setShowEventLibrary(false); setShowNewEvent(true); }} />}
           {showScheduleImport && <ScheduleImportDialog day={activeDay} onClose={() => setShowScheduleImport(false)} onImport={importSchedule} />}
           {showRoleImport && <RoleImportDialog roleTemplates={roleTemplates} onClose={() => setShowRoleImport(false)} onImport={importRoleTemplates} />}
           {showRoster && <RosterDialog data={data} onClose={() => setShowRoster(false)} onSave={saveRoster} />}
@@ -1568,7 +1637,6 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
         publishedData ? <PublishedExecView data={publishedData} person={publishedData.people.find((person) => person.id === execPersonId) ?? publishedData.people[0]!} dayId={dayId} setDayId={setDayId} onPersonChange={changeExecPerson} onExit={exitExecView} /> : null
       )}
       {confirmation ? <ConfirmationDialog request={confirmation} onCancel={() => resolveConfirmation(false)} onConfirm={() => resolveConfirmation(true)} /> : null}
-      {shareLink ? <ShareLinkDialog shareLink={shareLink} onClose={() => setShareLink(null)} onCopied={() => { setShareLink(null); setToast("Link copied."); window.setTimeout(() => setToast(""), 2400); }} /> : null}
       {toast ? <div className={`toast ${toastError ? "error" : ""}`} role={toastError ? "alert" : "status"}><span>{toastError ? "!" : "✓"}</span>{toast}{!toastError && undoState ? <button onClick={() => { const previous = undoState; setUndoState(null); void save(previous, "Change undone."); }}>Undo</button> : null}</div> : null}
     </div>
   );
@@ -1635,27 +1703,6 @@ function AssignmentIntervalDialog({ day, block, person, role, assignment, onClos
     <footer><button className="button secondary" onClick={onClose}>Cancel</button><button className={`button ${selectedAvailability === "available" ? "primary" : "danger"}`} onClick={() => onSave(start, end)}>{assignment ? "Save assignment time" : selectedAvailability === "available" ? "Assign interval" : "Assign anyway"}</button></footer>
   </section></div>;
 }
-
-function ShareLinkDialog({ shareLink, onClose, onCopied }: { shareLink: ShareLink; onClose: () => void; onCopied: () => void }) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    inputRef.current?.select();
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [onClose]);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(shareLink.url);
-      onCopied();
-    } catch {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    }
-  };
-  return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog share-link-dialog" role="dialog" aria-modal="true" aria-labelledby="share-link-title"><header><div><span className="kicker">Share link</span><h2 id="share-link-title">{shareLink.title}</h2><p>{shareLink.message}</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="share-link-body"><label>Link<input ref={inputRef} value={shareLink.url} readOnly onFocus={(event) => event.currentTarget.select()} /></label><p>Select the link and copy it manually if your browser blocks the copy button.</p></div><footer><button className="button secondary" onClick={onClose}>Close</button><button className="button primary" onClick={copy}>Copy link</button></footer></section></div>;
-}
-
 function DayToggle({ data, dayId, setDayId }: { data: EventState; dayId: string; setDayId: (id: string) => void }) {
   return <div className="day-toggle" aria-label="Event day">{data.days.map((day) => <button key={day.id} className={dayId === day.id ? "active" : ""} onClick={() => setDayId(day.id)}>{day.label}<small>{day.date.replace(/^[A-Za-z]+, /, "")}</small></button>)}</div>;
 }
@@ -1876,7 +1923,7 @@ function RemoveRoleDialog({ block, role, assignmentCount, onClose, onConfirm }: 
   return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="remove-role-title" aria-describedby="remove-role-description" onKeyDown={(event) => { if (event.key === "Escape") onClose(); }}><header><div><span className="kicker">Remove block role</span><h2 id="remove-role-title">Remove “{role.name}”?</h2><p id="remove-role-description">This removes the role from {block.label}{assignmentCount ? ` and unassigns ${assignmentCount} ${assignmentCount === 1 ? "person" : "people"}` : ""}. Their availability and other assignments will stay unchanged.</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="confirm-dialog-body"><span aria-hidden="true">!</span><div><strong>This change only affects {block.label}.</strong><p>You can use Undo immediately after removing the role if you change your mind.</p></div></div><footer><button className="button secondary" onClick={onClose}>Keep role</button><button className="button danger" onClick={onConfirm} autoFocus>Remove role</button></footer></section></div>;
 }
 
-function PrepView({ data, onSave, onShare }: { data: EventState; onSave: (sessions: PrepSession[], tasks: PrepTask[], availability: Record<string, Record<string, AvailabilityStatus>>) => void; onShare: () => void }) {
+function PrepView({ data, onSave }: { data: EventState; onSave: (sessions: PrepSession[], tasks: PrepTask[], availability: Record<string, Record<string, AvailabilityStatus>>) => void }) {
   const [sessions, setSessions] = useState<PrepSession[]>(() => structuredClone(data.prepSessions));
   const [tasks, setTasks] = useState<PrepTask[]>(() => structuredClone(data.prepTasks));
   const [availability, setAvailability] = useState<Record<string, Record<string, AvailabilityStatus>>>(() => Object.fromEntries(data.people.map((person) => [person.id, structuredClone(person.prepAvailability)])));
@@ -1889,7 +1936,7 @@ function PrepView({ data, onSave, onShare }: { data: EventState; onSave: (sessio
     next[personId][sessionId] = status === "available" ? "conditional" : status === "conditional" ? "unavailable" : "available";
     return next;
   });
-  return <div className="content"><div className="section-title compact"><div><span className="kicker">Before the event</span><h2>Prep mini-compendium</h2><p>Plan the working sessions, collect availability, and keep every packing, printing, and walkthrough task in one place.</p></div><div className="prep-header-actions"><button className="button secondary" onClick={onShare}>Share prep</button><button className="button primary" onClick={() => onSave(sessions, tasks, availability)}>Save prep plan</button></div></div><div className="prep-summary"><div><strong>{sessions.length}</strong><span>prep sessions</span></div><div><strong>{tasks.filter((task) => task.done).length}/{tasks.length}</strong><span>tasks complete</span></div><div><strong>{new Set(tasks.map((task) => task.ownerPersonId).filter(Boolean)).size}</strong><span>people owning work</span></div></div><div className="prep-workspace"><section className="prep-panel"><div className="form-section-head"><div><h3>Prep sessions</h3><p>Usually scheduled a few days before the event.</p></div><button onClick={() => setSessions((current) => [...current, { id: `prep-session-${Date.now()}`, label: "New prep session", date: "", start: "5:00 PM", end: "7:00 PM", location: "" }])}>+ Add session</button></div><div className="prep-session-list">{sessions.map((session) => <article key={session.id}><input value={session.label} aria-label="Session name" onChange={(event) => updateSession(session.id, { label: event.target.value })} /><input type="date" value={session.date} aria-label={`${session.label} date`} onChange={(event) => updateSession(session.id, { date: event.target.value })} /><input value={session.start} aria-label={`${session.label} start time`} onChange={(event) => updateSession(session.id, { start: event.target.value })} /><input value={session.end} aria-label={`${session.label} end time`} onChange={(event) => updateSession(session.id, { end: event.target.value })} /><input value={session.location} placeholder="Location" aria-label={`${session.label} location`} onChange={(event) => updateSession(session.id, { location: event.target.value })} /><button onClick={() => { setSessions((current) => current.filter((item) => item.id !== session.id)); setTasks((current) => current.map((task) => task.sessionId === session.id ? { ...task, sessionId: "" } : task)); }} aria-label={`Remove ${session.label}`}>×</button></article>)}</div></section><section className="prep-panel prep-tasks"><div className="form-section-head"><div><h3>Prep checklist</h3><p>This becomes the working mini-compendium for the prep team.</p></div><button onClick={() => setTasks((current) => [...current, { id: `prep-task-${Date.now()}`, label: "New prep task", done: false, ownerPersonId: "", sessionId: sessions[0]?.id ?? "", notes: "" }])}>+ Add task</button></div><div className="prep-task-list">{tasks.map((task) => <article className={task.done ? "done" : ""} key={task.id}><input type="checkbox" checked={task.done} aria-label={`Mark ${task.label} complete`} onChange={(event) => updateTask(task.id, { done: event.target.checked })} /><div><input value={task.label} aria-label="Task" onChange={(event) => updateTask(task.id, { label: event.target.value })} /><input value={task.notes} placeholder="Instructions or items needed" aria-label={`${task.label} notes`} onChange={(event) => updateTask(task.id, { notes: event.target.value })} /></div><select value={task.ownerPersonId} aria-label={`${task.label} owner`} onChange={(event) => updateTask(task.id, { ownerPersonId: event.target.value })}><option value="">No owner</option>{data.people.map((person) => <option value={person.id} key={person.id}>{person.name}</option>)}</select><select value={task.sessionId} aria-label={`${task.label} session`} onChange={(event) => updateTask(task.id, { sessionId: event.target.value })}><option value="">No session</option>{sessions.map((session) => <option value={session.id} key={session.id}>{session.label}</option>)}</select><button onClick={() => setTasks((current) => current.filter((item) => item.id !== task.id))} aria-label={`Remove ${task.label}`}>×</button></article>)}</div></section></div><section className="prep-panel prep-availability"><div className="form-section-head"><div><h3>Prep availability</h3><p>Click a cell to cycle through available, conditional, and unavailable.</p></div></div>{sessions.length ? <div className="availability-scroll"><div className="prep-availability-grid" style={{ "--prep-columns": sessions.length, "--prep-width": `${190 + sessions.length * 170}px` } as React.CSSProperties}><div className="availability-corner">Exec</div>{sessions.map((session) => <div className="availability-head" key={session.id}><strong>{session.label}</strong><small>{session.date || "Date TBD"} · {session.start}</small></div>)}{data.people.map((person) => <div className="availability-row" key={person.id}><div className="availability-person"><PersonAvatar person={person} small /><div><strong>{person.name}</strong><small>{person.team}</small></div></div>{sessions.map((session) => { const status = availability[person.id]?.[session.id] ?? "available"; return <button key={session.id} className={`availability-block ${status}`} onClick={() => cycleAvailability(person.id, session.id)}><span>{status === "available" ? "✓" : status === "conditional" ? "~" : "×"}</span></button>; })}</div>)}</div></div> : <p className="empty-copy">Add a prep session to collect availability.</p>}</section></div>;
+  return <div className="content"><div className="section-title compact"><div><span className="kicker">Before the event</span><h2>Prep mini-compendium</h2><p>Plan the working sessions, collect availability, and keep every packing, printing, and walkthrough task in one place.</p></div><div className="prep-header-actions"><button className="button primary" onClick={() => onSave(sessions, tasks, availability)}>Save prep plan</button></div></div><div className="prep-summary"><div><strong>{sessions.length}</strong><span>prep sessions</span></div><div><strong>{tasks.filter((task) => task.done).length}/{tasks.length}</strong><span>tasks complete</span></div><div><strong>{new Set(tasks.map((task) => task.ownerPersonId).filter(Boolean)).size}</strong><span>people owning work</span></div></div><div className="prep-workspace"><section className="prep-panel"><div className="form-section-head"><div><h3>Prep sessions</h3><p>Usually scheduled a few days before the event.</p></div><button onClick={() => setSessions((current) => [...current, { id: `prep-session-${Date.now()}`, label: "New prep session", date: "", start: "5:00 PM", end: "7:00 PM", location: "" }])}>+ Add session</button></div><div className="prep-session-list">{sessions.map((session) => <article key={session.id}><input value={session.label} aria-label="Session name" onChange={(event) => updateSession(session.id, { label: event.target.value })} /><input type="date" value={session.date} aria-label={`${session.label} date`} onChange={(event) => updateSession(session.id, { date: event.target.value })} /><input value={session.start} aria-label={`${session.label} start time`} onChange={(event) => updateSession(session.id, { start: event.target.value })} /><input value={session.end} aria-label={`${session.label} end time`} onChange={(event) => updateSession(session.id, { end: event.target.value })} /><input value={session.location} placeholder="Location" aria-label={`${session.label} location`} onChange={(event) => updateSession(session.id, { location: event.target.value })} /><button onClick={() => { setSessions((current) => current.filter((item) => item.id !== session.id)); setTasks((current) => current.map((task) => task.sessionId === session.id ? { ...task, sessionId: "" } : task)); }} aria-label={`Remove ${session.label}`}>×</button></article>)}</div></section><section className="prep-panel prep-tasks"><div className="form-section-head"><div><h3>Prep checklist</h3><p>This becomes the working mini-compendium for the prep team.</p></div><button onClick={() => setTasks((current) => [...current, { id: `prep-task-${Date.now()}`, label: "New prep task", done: false, ownerPersonId: "", sessionId: sessions[0]?.id ?? "", notes: "" }])}>+ Add task</button></div><div className="prep-task-list">{tasks.map((task) => <article className={task.done ? "done" : ""} key={task.id}><input type="checkbox" checked={task.done} aria-label={`Mark ${task.label} complete`} onChange={(event) => updateTask(task.id, { done: event.target.checked })} /><div><input value={task.label} aria-label="Task" onChange={(event) => updateTask(task.id, { label: event.target.value })} /><input value={task.notes} placeholder="Instructions or items needed" aria-label={`${task.label} notes`} onChange={(event) => updateTask(task.id, { notes: event.target.value })} /></div><select value={task.ownerPersonId} aria-label={`${task.label} owner`} onChange={(event) => updateTask(task.id, { ownerPersonId: event.target.value })}><option value="">No owner</option>{data.people.map((person) => <option value={person.id} key={person.id}>{person.name}</option>)}</select><select value={task.sessionId} aria-label={`${task.label} session`} onChange={(event) => updateTask(task.id, { sessionId: event.target.value })}><option value="">No session</option>{sessions.map((session) => <option value={session.id} key={session.id}>{session.label}</option>)}</select><button onClick={() => setTasks((current) => current.filter((item) => item.id !== task.id))} aria-label={`Remove ${task.label}`}>×</button></article>)}</div></section></div><section className="prep-panel prep-availability"><div className="form-section-head"><div><h3>Prep availability</h3><p>Click a cell to cycle through available, conditional, and unavailable.</p></div></div>{sessions.length ? <div className="availability-scroll"><div className="prep-availability-grid" style={{ "--prep-columns": sessions.length, "--prep-width": `${190 + sessions.length * 170}px` } as React.CSSProperties}><div className="availability-corner">Exec</div>{sessions.map((session) => <div className="availability-head" key={session.id}><strong>{session.label}</strong><small>{session.date || "Date TBD"} · {session.start}</small></div>)}{data.people.map((person) => <div className="availability-row" key={person.id}><div className="availability-person"><PersonAvatar person={person} small /><div><strong>{person.name}</strong><small>{person.team}</small></div></div>{sessions.map((session) => { const status = availability[person.id]?.[session.id] ?? "available"; return <button key={session.id} className={`availability-block ${status}`} onClick={() => cycleAvailability(person.id, session.id)}><span>{status === "available" ? "✓" : status === "conditional" ? "~" : "×"}</span></button>; })}</div>)}</div></div> : <p className="empty-copy">Add a prep session to collect availability.</p>}</section></div>;
 }
 
 function PeopleView({ data, activeDay, dayId, setDayId, onAvailability, onWindowChange }: { data: EventState; activeDay: EventDay; dayId: string; setDayId: (id: string) => void; onAvailability: (personId: string, slotKey: string) => void; onWindowChange: (start: string, end: string) => void }) {
@@ -1993,11 +2040,60 @@ function ResourcesView({ data, onSave }: { data: EventState; onSave: (resources:
   return <div className="content"><div className="section-title compact"><div><span className="kicker">Event overview</span><h2>Event home base</h2><p>Day-of essentials stay up front. Planning, participant, partner, feedback, and finance resources remain one click away.</p></div><button className="button primary" onClick={() => setEditing(true)}>Edit overview</button></div><div className="resource-home"><div className="overview-grid"><section className="overview-panel"><header><span>↗</span><div><h3>Day-of essentials</h3><p>{dayOf.length} resources pinned</p></div></header><div className="overview-group">{dayOf.map(resourceItem)}{!dayOf.length ? <p className="empty-copy">No day-of resources pinned yet.</p> : null}</div></section><section className="overview-panel"><header><span>☎</span><div><h3>Important people</h3><p>{data.contacts.length} contacts</p></div></header><div className="contact-list">{data.contacts.map((contact) => <a href={`tel:${contact.phone}`} key={contact.id}><div><strong>{contact.name}</strong><span>{contact.role}</span></div><b>{contact.phone}</b></a>)}{!data.contacts.length ? <p className="empty-copy">No contacts added yet.</p> : null}</div></section></div><section className="overview-panel event-library-panel"><header><span>≡</span><div><h3>Complete event library</h3><p>{library.length} planning and reference resources</p></div></header><div className="resource-category-grid">{libraryGroups.map((group) => <details key={group}><summary><span>{group}</span><b>{library.filter((resource) => resource.group === group).length}</b></summary><div className="overview-group">{library.filter((resource) => resource.group === group).map(resourceItem)}</div></details>)}</div></section></div></div>;
 }
 
-function EventLibraryDialog({ events, currentId, onClose, onSwitch, onNew }: { events: EventState[]; currentId: string; onClose: () => void; onSwitch: (event: EventState) => void; onNew: () => void }) {
-  return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog event-library" role="dialog" aria-modal="true" aria-label="Choose event"><header><div><span className="kicker">Your events</span><h2>Choose a workspace</h2></div><button onClick={onClose} aria-label="Close">×</button></header><div className="event-library-list">{events.map((event) => <button key={event.eventId} className={event.eventId === currentId ? "active" : ""} onClick={() => onSwitch(event)}><span className="event-mark">{event.eventName.slice(0, 2).toUpperCase()}</span><div><strong>{event.eventName}</strong><small>{event.eventType} · {event.dateRange} · {event.days.length} day{event.days.length === 1 ? "" : "s"}</small></div><b>{event.eventId === currentId ? "Current" : "Open →"}</b></button>)}</div><footer><button className="button primary" onClick={onNew}>+ Create new event</button></footer></section></div>;
+function EventLibraryDialog({ events, currentId, view, busyEventId, canClose, onView, onClose, onSwitch, onArchive, onRestore, onDelete, onNew }: {
+  events: EventState[];
+  currentId: string;
+  view: "active" | "archived";
+  busyEventId: string;
+  canClose: boolean;
+  onView: (view: "active" | "archived") => void;
+  onClose: () => void;
+  onSwitch: (event: EventState) => void;
+  onArchive: (event: EventState) => void;
+  onRestore: (event: EventState) => void;
+  onDelete: (event: EventState) => void;
+  onNew: () => void;
+}) {
+  const activeEvents = events.filter((event) => !isEventArchived(event));
+  const archivedEvents = events.filter(isEventArchived);
+  const visibleEvents = view === "active" ? activeEvents : archivedEvents;
+  return (
+    <div className="drawer-backdrop centered" onMouseDown={(event) => { if (canClose && event.target === event.currentTarget) onClose(); }}>
+      <section className="setup-dialog event-library" role="dialog" aria-modal="true" aria-label="Choose event">
+        <header>
+          <div><span className="kicker">Your events</span><h2>Choose a workspace</h2></div>
+          {canClose ? <button onClick={onClose} aria-label="Close">×</button> : null}
+        </header>
+        <nav className="event-library-tabs" aria-label="Event status">
+          <button className={view === "active" ? "active" : ""} onClick={() => onView("active")}>Active <span>{activeEvents.length}</span></button>
+          <button className={view === "archived" ? "active" : ""} onClick={() => onView("archived")}>Archived <span>{archivedEvents.length}</span></button>
+        </nav>
+        <div className="event-library-list">
+          {visibleEvents.map((event) => {
+            const busy = busyEventId === event.eventId;
+            return (
+              <article key={event.eventId} className={event.eventId === currentId ? "active" : ""} aria-busy={busy}>
+                <button className="event-library-open" disabled={busy || event.eventId === currentId || view === "archived"} onClick={() => onSwitch(event)}>
+                  <span className="event-mark">{event.eventName.slice(0, 2).toUpperCase()}</span>
+                  <span><strong>{event.eventName}</strong><small>{event.eventType} · {event.dateRange} · {event.days.length} day{event.days.length === 1 ? "" : "s"}</small>{view === "archived" && event.relayMeta?.archivedAt ? <small>Archived {new Date(event.relayMeta.archivedAt).toLocaleDateString()}</small> : null}</span>
+                  <b>{busy ? "Working…" : event.eventId === currentId ? "Current" : view === "active" ? "Open →" : "Archived"}</b>
+                </button>
+                <div className="event-library-actions">
+                  {view === "active" ? <button disabled={busy} onClick={() => onArchive(event)}>Archive</button> : <button disabled={busy} onClick={() => onRestore(event)}>Restore</button>}
+                  <button className="danger" disabled={busy} onClick={() => onDelete(event)}>Delete</button>
+                </div>
+              </article>
+            );
+          })}
+          {!visibleEvents.length ? <div className="event-library-empty"><strong>No {view} events</strong><p>{view === "active" ? "Create a new event or restore one from the archive." : "Events you archive will appear here and can be restored later."}</p>{view === "active" && archivedEvents.length ? <button className="button secondary" onClick={() => onView("archived")}>View archived events</button> : null}</div> : null}
+        </div>
+        <footer><button className="button primary" onClick={onNew}>+ Create new event</button></footer>
+      </section>
+    </div>
+  );
 }
 
-function NewEventDialog({ onClose, onCreate }: { onClose: () => void; onCreate: (values: { name: string; type: string; venue: string; startDate: string; dayCount: number }) => void }) {
+function NewEventDialog({ canClose = true, onClose, onCreate }: { canClose?: boolean; onClose: () => void; onCreate: (values: { name: string; type: string; venue: string; startDate: string; dayCount: number }) => void }) {
   const [name, setName] = useState("");
   const [type, setType] = useState("Conference");
   const [venue, setVenue] = useState("");
@@ -2005,7 +2101,7 @@ function NewEventDialog({ onClose, onCreate }: { onClose: () => void; onCreate: 
   const [dayCountInput, setDayCountInput] = useState("1");
   const dayCount = validateDayCount(dayCountInput);
   const canCreate = Boolean(name.trim() && startDate.trim() && dayCount.value !== null);
-  return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog" role="dialog" aria-modal="true" aria-label="Create a new event"><header><div><span className="kicker">New event</span><h2>Start with a blank canvas.</h2><p>Relay will create the days. You decide every block, role, lead, link, and assignment.</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="setup-form"><label>Event name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. BluePrint 2027" autoFocus /></label><div className="form-row"><label>Event type<select value={type} onChange={(event) => setType(event.target.value)}><option>Conference</option><option>Competition</option><option>Workshop</option><option>Social</option><option>Other</option></select></label><label>Number of days<input type="number" min="1" max="7" step="1" value={dayCountInput} aria-invalid={Boolean(dayCount.error)} aria-describedby={dayCount.error ? "day-count-error" : undefined} onInput={(event) => setDayCountInput(event.currentTarget.value)} onBlur={(event) => setDayCountInput(event.currentTarget.value)} />{dayCount.error ? <small className="field-error" id="day-count-error" role="alert">{dayCount.error}</small> : null}</label></div><label>Venue<input value={venue} onChange={(event) => setVenue(event.target.value)} placeholder="Building, campus, or venue" /></label><label>First event date<input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label></div><footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!canCreate} onClick={() => { if (dayCount.value === null) return; onCreate({ name: name.trim(), type, venue: venue.trim() || "Venue TBD", startDate: startDate.trim(), dayCount: dayCount.value }); }}>Create blank event</button></footer></section></div>;
+  return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (canClose && event.target === event.currentTarget) onClose(); }}><section className="setup-dialog" role="dialog" aria-modal="true" aria-label="Create a new event"><header><div><span className="kicker">New event</span><h2>Start with a blank canvas.</h2><p>Relay will create the days. You decide every block, role, lead, link, and assignment.</p></div>{canClose ? <button onClick={onClose} aria-label="Close">×</button> : null}</header><div className="setup-form"><label>Event name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. BluePrint 2027" autoFocus /></label><div className="form-row"><label>Event type<select value={type} onChange={(event) => setType(event.target.value)}><option>Conference</option><option>Competition</option><option>Workshop</option><option>Social</option><option>Other</option></select></label><label>Number of days<input type="number" min="1" max="7" step="1" value={dayCountInput} aria-invalid={Boolean(dayCount.error)} aria-describedby={dayCount.error ? "day-count-error" : undefined} onInput={(event) => setDayCountInput(event.currentTarget.value)} onBlur={(event) => setDayCountInput(event.currentTarget.value)} />{dayCount.error ? <small className="field-error" id="day-count-error" role="alert">{dayCount.error}</small> : null}</label></div><label>Venue<input value={venue} onChange={(event) => setVenue(event.target.value)} placeholder="Building, campus, or venue" /></label><label>First event date<input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label></div><footer>{canClose ? <button className="button secondary" onClick={onClose}>Cancel</button> : null}<button className="button primary" disabled={!canCreate} onClick={() => { if (dayCount.value === null) return; onCreate({ name: name.trim(), type, venue: venue.trim() || "Venue TBD", startDate: startDate.trim(), dayCount: dayCount.value }); }}>Create blank event</button></footer></section></div>;
 }
 
 function ScheduleImportDialog({ day, onClose, onImport }: { day: EventDay; onClose: () => void; onImport: (blocks: EventBlock[], replace: boolean) => void }) {
