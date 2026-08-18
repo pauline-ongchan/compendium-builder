@@ -81,12 +81,10 @@ async function initializeDb() {
     END $$
   `);
   await db.execute(sql`ALTER TABLE event_states ADD COLUMN IF NOT EXISTS published_payload TEXT`);
-  await db.execute(sql`ALTER TABLE event_states ADD COLUMN IF NOT EXISTS share_token TEXT`);
   await db.execute(sql`ALTER TABLE event_states ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ`);
   await db.execute(sql`ALTER TABLE event_states ADD COLUMN IF NOT EXISTS published_by TEXT`);
   await db.execute(sql`ALTER TABLE event_states ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ`);
   await db.execute(sql`ALTER TABLE event_states ADD COLUMN IF NOT EXISTS archived_by TEXT`);
-  await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS event_states_share_token_unique ON event_states (share_token)`);
   await db.execute(sql`
     UPDATE event_states
     SET published_payload = payload,

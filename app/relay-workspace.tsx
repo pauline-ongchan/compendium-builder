@@ -32,7 +32,7 @@ function setExecViewUrl(active: boolean, eventId?: string) {
   } else url.searchParams.delete("view");
   window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
 }
-type RelayMeta = { shareToken: string | null; updatedAt: string | null; updatedBy: string | null; publishedAt: string | null; publishedBy: string | null; archivedAt: string | null; archivedBy: string | null };
+type RelayMeta = { updatedAt: string | null; updatedBy: string | null; publishedAt: string | null; publishedBy: string | null; archivedAt: string | null; archivedBy: string | null };
 
 type BlockLink = { id: string; label: string; url: string };
 type RoleTemplate = SharedRoleTemplate;
@@ -72,7 +72,6 @@ type ConfirmationRequest = {
   cancelLabel?: string;
   tone?: "warning" | "danger";
 };
-type ShareLink = { title: string; message: string; url: string };
 
 type EventBlock = {
   id: string;
@@ -622,7 +621,6 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
   const [loadingPublished, setLoadingPublished] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [confirmation, setConfirmation] = useState<ConfirmationRequest | null>(null);
-  const [shareLink, setShareLink] = useState<ShareLink | null>(null);
   const confirmationResolver = useRef<((confirmed: boolean) => void) | null>(null);
 
   const requestConfirmation = (request: ConfirmationRequest) => new Promise<boolean>((resolve) => {
@@ -1382,19 +1380,6 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
     void save(next, "Prep mini-compendium updated.");
   };
 
-  const sharePrep = async () => {
-    if (!data.relayMeta?.shareToken) return showError("Save the event once before sharing prep.");
-    const url = new URL(`/exec/${data.relayMeta.shareToken}`, window.location.origin);
-    url.searchParams.set("view", "prep");
-    try {
-      await navigator.clipboard.writeText(url.toString());
-      setToast("Prep link copied. Send it to everyone helping before the event.");
-      window.setTimeout(() => setToast(""), 2400);
-    } catch {
-      setShareLink({ title: "Share prep", message: "Copy this link and send it to everyone helping before the event.", url: url.toString() });
-    }
-  };
-
   const startNewEvent = (values: { name: string; type: string; venue: string; startDate: string; dayCount: number }) => {
     const next = createBlankEvent(values, data.people);
     setShowNewEvent(false);
@@ -1448,7 +1433,7 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
   const deleteEvent = async (event: EventState) => {
     const confirmed = await requestConfirmation({
       title: `Delete ${event.eventName}?`,
-      message: "This permanently removes the event, including its schedule, assignments, resources, and published link. This cannot be undone.",
+      message: "This permanently removes the event, including its schedule, assignments, resources, and published snapshot. This cannot be undone.",
       confirmLabel: "Delete event",
       cancelLabel: "Keep event",
       tone: "danger",
@@ -1535,7 +1520,7 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
             </header>
 
             {section === "schedule" && <ScheduleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} warnings={warnings} reviewTarget={scheduleReviewTarget} selectedRoles={selectedRoles} boardLocked={boardLocked} roleTemplates={roleTemplates} onToggleLock={toggleBoardLock} onSelectRole={toggleSelectedRole} onCell={changeAssignment} onAssignRole={assignBlockRoleToPerson} onClearAssignment={clearAssignment} onMoveAssignment={moveAssignment} onAddRole={addScheduleRoleToBlock} onCreateRole={createAndAddRole} onEditRole={(blockId, blockRoleId) => setRoleEditor({ blockId, blockRoleId })} onRemoveRole={requestBlockRoleRemoval} onAssignRest={assignRestToOnCall} onAddBlock={() => setBlockEditor({})} onImport={() => setShowScheduleImport(true)} onEditBlock={(blockId) => setBlockEditor({ blockId })} onDuplicateBlock={duplicateBlock} onDeleteBlock={setDeleteBlockId} onReview={reviewScheduleCheck} onViewAll={() => setShowScheduleChecks(true)} />}
-            {section === "prep" && <PrepView data={data} onSave={savePrep} onShare={sharePrep} />}
+            {section === "prep" && <PrepView data={data} onSave={savePrep} />}
             {section === "people" && <PeopleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} onAvailability={cycleBlockAvailability} />}
             {section === "roles" && <RolesView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} roleTemplates={roleTemplates} onOpen={(blockId, blockRoleId) => setRoleEditor({ blockId, blockRoleId })} onEditBlock={(blockId) => setBlockEditor({ blockId })} onAddRoleToBlock={addLibraryRoleToBlock} onCreateRole={() => setRoleTemplateEditor({})} onEditRole={(templateId) => setRoleTemplateEditor({ templateId })} onImport={() => setShowRoleImport(true)} />}
             {section === "judging" && <JudgingView data={data} onCycle={cycleJudgingStatus} />}
@@ -1558,7 +1543,6 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
         publishedData ? <PublishedExecView data={publishedData} person={publishedData.people.find((person) => person.id === execPersonId) ?? publishedData.people[0]!} dayId={dayId} setDayId={setDayId} onPersonChange={changeExecPerson} onExit={exitExecView} /> : null
       )}
       {confirmation ? <ConfirmationDialog request={confirmation} onCancel={() => resolveConfirmation(false)} onConfirm={() => resolveConfirmation(true)} /> : null}
-      {shareLink ? <ShareLinkDialog shareLink={shareLink} onClose={() => setShareLink(null)} onCopied={() => { setShareLink(null); setToast("Link copied."); window.setTimeout(() => setToast(""), 2400); }} /> : null}
       {toast ? <div className={`toast ${toastError ? "error" : ""}`} role={toastError ? "alert" : "status"}><span>{toastError ? "!" : "✓"}</span>{toast}{!toastError && undoState ? <button onClick={() => { const previous = undoState; setUndoState(null); void save(previous, "Change undone."); }}>Undo</button> : null}</div> : null}
     </div>
   );
@@ -1571,26 +1555,6 @@ function ConfirmationDialog({ request, onCancel, onConfirm }: { request: Confirm
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [onCancel]);
   return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}><section className="setup-dialog confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirmation-title" aria-describedby="confirmation-message"><header><div><h2 id="confirmation-title">{request.title}</h2><p id="confirmation-message">{request.message}</p></div><button onClick={onCancel} aria-label="Close">×</button></header><footer><button className="button secondary" onClick={onCancel}>{request.cancelLabel ?? "Cancel"}</button><button className={`button ${request.tone === "danger" ? "danger" : "primary"}`} onClick={onConfirm} autoFocus>{request.confirmLabel}</button></footer></section></div>;
-}
-
-function ShareLinkDialog({ shareLink, onClose, onCopied }: { shareLink: ShareLink; onClose: () => void; onCopied: () => void }) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    inputRef.current?.select();
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [onClose]);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(shareLink.url);
-      onCopied();
-    } catch {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    }
-  };
-  return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog share-link-dialog" role="dialog" aria-modal="true" aria-labelledby="share-link-title"><header><div><span className="kicker">Share link</span><h2 id="share-link-title">{shareLink.title}</h2><p>{shareLink.message}</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="share-link-body"><label>Link<input ref={inputRef} value={shareLink.url} readOnly onFocus={(event) => event.currentTarget.select()} /></label><p>Select the link and copy it manually if your browser blocks the copy button.</p></div><footer><button className="button secondary" onClick={onClose}>Close</button><button className="button primary" onClick={copy}>Copy link</button></footer></section></div>;
 }
 
 function DayToggle({ data, dayId, setDayId }: { data: EventState; dayId: string; setDayId: (id: string) => void }) {
@@ -1809,7 +1773,7 @@ function RemoveRoleDialog({ block, role, assignmentCount, onClose, onConfirm }: 
   return <div className="drawer-backdrop centered" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="setup-dialog confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="remove-role-title" aria-describedby="remove-role-description" onKeyDown={(event) => { if (event.key === "Escape") onClose(); }}><header><div><span className="kicker">Remove block role</span><h2 id="remove-role-title">Remove “{role.name}”?</h2><p id="remove-role-description">This removes the role from {block.label}{assignmentCount ? ` and unassigns ${assignmentCount} ${assignmentCount === 1 ? "person" : "people"}` : ""}. Their availability and other assignments will stay unchanged.</p></div><button onClick={onClose} aria-label="Close">×</button></header><div className="confirm-dialog-body"><span aria-hidden="true">!</span><div><strong>This change only affects {block.label}.</strong><p>You can use Undo immediately after removing the role if you change your mind.</p></div></div><footer><button className="button secondary" onClick={onClose}>Keep role</button><button className="button danger" onClick={onConfirm} autoFocus>Remove role</button></footer></section></div>;
 }
 
-function PrepView({ data, onSave, onShare }: { data: EventState; onSave: (sessions: PrepSession[], tasks: PrepTask[], availability: Record<string, Record<string, AvailabilityStatus>>) => void; onShare: () => void }) {
+function PrepView({ data, onSave }: { data: EventState; onSave: (sessions: PrepSession[], tasks: PrepTask[], availability: Record<string, Record<string, AvailabilityStatus>>) => void }) {
   const [sessions, setSessions] = useState<PrepSession[]>(() => structuredClone(data.prepSessions));
   const [tasks, setTasks] = useState<PrepTask[]>(() => structuredClone(data.prepTasks));
   const [availability, setAvailability] = useState<Record<string, Record<string, AvailabilityStatus>>>(() => Object.fromEntries(data.people.map((person) => [person.id, structuredClone(person.prepAvailability)])));
@@ -1822,7 +1786,7 @@ function PrepView({ data, onSave, onShare }: { data: EventState; onSave: (sessio
     next[personId][sessionId] = status === "available" ? "conditional" : status === "conditional" ? "unavailable" : "available";
     return next;
   });
-  return <div className="content"><div className="section-title compact"><div><span className="kicker">Before the event</span><h2>Prep mini-compendium</h2><p>Plan the working sessions, collect availability, and keep every packing, printing, and walkthrough task in one place.</p></div><div className="prep-header-actions"><button className="button secondary" onClick={onShare}>Share prep</button><button className="button primary" onClick={() => onSave(sessions, tasks, availability)}>Save prep plan</button></div></div><div className="prep-summary"><div><strong>{sessions.length}</strong><span>prep sessions</span></div><div><strong>{tasks.filter((task) => task.done).length}/{tasks.length}</strong><span>tasks complete</span></div><div><strong>{new Set(tasks.map((task) => task.ownerPersonId).filter(Boolean)).size}</strong><span>people owning work</span></div></div><div className="prep-workspace"><section className="prep-panel"><div className="form-section-head"><div><h3>Prep sessions</h3><p>Usually scheduled a few days before the event.</p></div><button onClick={() => setSessions((current) => [...current, { id: `prep-session-${Date.now()}`, label: "New prep session", date: "", start: "5:00 PM", end: "7:00 PM", location: "" }])}>+ Add session</button></div><div className="prep-session-list">{sessions.map((session) => <article key={session.id}><input value={session.label} aria-label="Session name" onChange={(event) => updateSession(session.id, { label: event.target.value })} /><input type="date" value={session.date} aria-label={`${session.label} date`} onChange={(event) => updateSession(session.id, { date: event.target.value })} /><input value={session.start} aria-label={`${session.label} start time`} onChange={(event) => updateSession(session.id, { start: event.target.value })} /><input value={session.end} aria-label={`${session.label} end time`} onChange={(event) => updateSession(session.id, { end: event.target.value })} /><input value={session.location} placeholder="Location" aria-label={`${session.label} location`} onChange={(event) => updateSession(session.id, { location: event.target.value })} /><button onClick={() => { setSessions((current) => current.filter((item) => item.id !== session.id)); setTasks((current) => current.map((task) => task.sessionId === session.id ? { ...task, sessionId: "" } : task)); }} aria-label={`Remove ${session.label}`}>×</button></article>)}</div></section><section className="prep-panel prep-tasks"><div className="form-section-head"><div><h3>Prep checklist</h3><p>This becomes the working mini-compendium for the prep team.</p></div><button onClick={() => setTasks((current) => [...current, { id: `prep-task-${Date.now()}`, label: "New prep task", done: false, ownerPersonId: "", sessionId: sessions[0]?.id ?? "", notes: "" }])}>+ Add task</button></div><div className="prep-task-list">{tasks.map((task) => <article className={task.done ? "done" : ""} key={task.id}><input type="checkbox" checked={task.done} aria-label={`Mark ${task.label} complete`} onChange={(event) => updateTask(task.id, { done: event.target.checked })} /><div><input value={task.label} aria-label="Task" onChange={(event) => updateTask(task.id, { label: event.target.value })} /><input value={task.notes} placeholder="Instructions or items needed" aria-label={`${task.label} notes`} onChange={(event) => updateTask(task.id, { notes: event.target.value })} /></div><select value={task.ownerPersonId} aria-label={`${task.label} owner`} onChange={(event) => updateTask(task.id, { ownerPersonId: event.target.value })}><option value="">No owner</option>{data.people.map((person) => <option value={person.id} key={person.id}>{person.name}</option>)}</select><select value={task.sessionId} aria-label={`${task.label} session`} onChange={(event) => updateTask(task.id, { sessionId: event.target.value })}><option value="">No session</option>{sessions.map((session) => <option value={session.id} key={session.id}>{session.label}</option>)}</select><button onClick={() => setTasks((current) => current.filter((item) => item.id !== task.id))} aria-label={`Remove ${task.label}`}>×</button></article>)}</div></section></div><section className="prep-panel prep-availability"><div className="form-section-head"><div><h3>Prep availability</h3><p>Click a cell to cycle through available, conditional, and unavailable.</p></div></div>{sessions.length ? <div className="availability-scroll"><div className="prep-availability-grid" style={{ "--prep-columns": sessions.length } as React.CSSProperties}><div className="availability-corner">Exec</div>{sessions.map((session) => <div className="availability-head" key={session.id}><strong>{session.label}</strong><small>{session.date || "Date TBD"} · {session.start}</small></div>)}{data.people.map((person) => <div className="availability-row" key={person.id}><div className="availability-person"><PersonAvatar person={person} small /><div><strong>{person.name}</strong><small>{person.team}</small></div></div>{sessions.map((session) => { const status = availability[person.id]?.[session.id] ?? "available"; return <button key={session.id} className={`availability-block ${status}`} onClick={() => cycleAvailability(person.id, session.id)}><span>{status === "available" ? "✓" : status === "conditional" ? "~" : "×"}</span></button>; })}</div>)}</div></div> : <p className="empty-copy">Add a prep session to collect availability.</p>}</section></div>;
+  return <div className="content"><div className="section-title compact"><div><span className="kicker">Before the event</span><h2>Prep mini-compendium</h2><p>Plan the working sessions, collect availability, and keep every packing, printing, and walkthrough task in one place.</p></div><div className="prep-header-actions"><button className="button primary" onClick={() => onSave(sessions, tasks, availability)}>Save prep plan</button></div></div><div className="prep-summary"><div><strong>{sessions.length}</strong><span>prep sessions</span></div><div><strong>{tasks.filter((task) => task.done).length}/{tasks.length}</strong><span>tasks complete</span></div><div><strong>{new Set(tasks.map((task) => task.ownerPersonId).filter(Boolean)).size}</strong><span>people owning work</span></div></div><div className="prep-workspace"><section className="prep-panel"><div className="form-section-head"><div><h3>Prep sessions</h3><p>Usually scheduled a few days before the event.</p></div><button onClick={() => setSessions((current) => [...current, { id: `prep-session-${Date.now()}`, label: "New prep session", date: "", start: "5:00 PM", end: "7:00 PM", location: "" }])}>+ Add session</button></div><div className="prep-session-list">{sessions.map((session) => <article key={session.id}><input value={session.label} aria-label="Session name" onChange={(event) => updateSession(session.id, { label: event.target.value })} /><input type="date" value={session.date} aria-label={`${session.label} date`} onChange={(event) => updateSession(session.id, { date: event.target.value })} /><input value={session.start} aria-label={`${session.label} start time`} onChange={(event) => updateSession(session.id, { start: event.target.value })} /><input value={session.end} aria-label={`${session.label} end time`} onChange={(event) => updateSession(session.id, { end: event.target.value })} /><input value={session.location} placeholder="Location" aria-label={`${session.label} location`} onChange={(event) => updateSession(session.id, { location: event.target.value })} /><button onClick={() => { setSessions((current) => current.filter((item) => item.id !== session.id)); setTasks((current) => current.map((task) => task.sessionId === session.id ? { ...task, sessionId: "" } : task)); }} aria-label={`Remove ${session.label}`}>×</button></article>)}</div></section><section className="prep-panel prep-tasks"><div className="form-section-head"><div><h3>Prep checklist</h3><p>This becomes the working mini-compendium for the prep team.</p></div><button onClick={() => setTasks((current) => [...current, { id: `prep-task-${Date.now()}`, label: "New prep task", done: false, ownerPersonId: "", sessionId: sessions[0]?.id ?? "", notes: "" }])}>+ Add task</button></div><div className="prep-task-list">{tasks.map((task) => <article className={task.done ? "done" : ""} key={task.id}><input type="checkbox" checked={task.done} aria-label={`Mark ${task.label} complete`} onChange={(event) => updateTask(task.id, { done: event.target.checked })} /><div><input value={task.label} aria-label="Task" onChange={(event) => updateTask(task.id, { label: event.target.value })} /><input value={task.notes} placeholder="Instructions or items needed" aria-label={`${task.label} notes`} onChange={(event) => updateTask(task.id, { notes: event.target.value })} /></div><select value={task.ownerPersonId} aria-label={`${task.label} owner`} onChange={(event) => updateTask(task.id, { ownerPersonId: event.target.value })}><option value="">No owner</option>{data.people.map((person) => <option value={person.id} key={person.id}>{person.name}</option>)}</select><select value={task.sessionId} aria-label={`${task.label} session`} onChange={(event) => updateTask(task.id, { sessionId: event.target.value })}><option value="">No session</option>{sessions.map((session) => <option value={session.id} key={session.id}>{session.label}</option>)}</select><button onClick={() => setTasks((current) => current.filter((item) => item.id !== task.id))} aria-label={`Remove ${task.label}`}>×</button></article>)}</div></section></div><section className="prep-panel prep-availability"><div className="form-section-head"><div><h3>Prep availability</h3><p>Click a cell to cycle through available, conditional, and unavailable.</p></div></div>{sessions.length ? <div className="availability-scroll"><div className="prep-availability-grid" style={{ "--prep-columns": sessions.length } as React.CSSProperties}><div className="availability-corner">Exec</div>{sessions.map((session) => <div className="availability-head" key={session.id}><strong>{session.label}</strong><small>{session.date || "Date TBD"} · {session.start}</small></div>)}{data.people.map((person) => <div className="availability-row" key={person.id}><div className="availability-person"><PersonAvatar person={person} small /><div><strong>{person.name}</strong><small>{person.team}</small></div></div>{sessions.map((session) => { const status = availability[person.id]?.[session.id] ?? "available"; return <button key={session.id} className={`availability-block ${status}`} onClick={() => cycleAvailability(person.id, session.id)}><span>{status === "available" ? "✓" : status === "conditional" ? "~" : "×"}</span></button>; })}</div>)}</div></div> : <p className="empty-copy">Add a prep session to collect availability.</p>}</section></div>;
 }
 
 function PeopleView({ data, activeDay, dayId, setDayId, onAvailability }: { data: EventState; activeDay: EventDay; dayId: string; setDayId: (id: string) => void; onAvailability: (personId: string, blockId: string) => void }) {

@@ -3,7 +3,6 @@ import { requirePortalApi } from "../../../../auth";
 import { ensureDb, getDb } from "../../../../db";
 import { eventStates } from "../../../../db/schema";
 import { mapTimeAvailabilityToBlocks, type AvailabilityState } from "../../../availability";
-import { createShareToken } from "../route";
 
 export async function POST(request: Request) {
   const authorization = await requirePortalApi();
@@ -21,24 +20,23 @@ export async function POST(request: Request) {
     const now = new Date().toISOString();
     await ensureDb();
     const existing = await getDb().select().from(eventStates).where(eq(eventStates.id, raw.eventId)).limit(1);
-    const shareToken = existing[0]?.shareToken ?? createShareToken();
+    if (existing[0]?.archivedAt) return Response.json({ error: "Restore this event before publishing it." }, { status: 409 });
     await getDb().insert(eventStates).values({
       id: raw.eventId,
       payload,
       publishedPayload: payload,
-      shareToken,
       updatedBy: authorization.email,
       publishedAt: now,
       publishedBy: authorization.email,
     }).onConflictDoUpdate({
       target: eventStates.id,
-      set: { payload, publishedPayload: payload, shareToken, updatedBy: authorization.email, updatedAt: now, publishedAt: now, publishedBy: authorization.email },
+      set: { payload, publishedPayload: payload, updatedBy: authorization.email, updatedAt: now, publishedAt: now, publishedBy: authorization.email },
     });
     return Response.json({
       ok: true,
       state: {
         ...state,
-        relayMeta: { shareToken, updatedAt: now, updatedBy: authorization.email, publishedAt: now, publishedBy: authorization.email },
+        relayMeta: { updatedAt: now, updatedBy: authorization.email, publishedAt: now, publishedBy: authorization.email, archivedAt: null, archivedBy: null },
       },
     });
   } catch (error) {

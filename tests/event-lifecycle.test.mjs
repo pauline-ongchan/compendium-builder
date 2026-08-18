@@ -19,5 +19,6 @@ test("event lifecycle persistence and controls include archive, restore, and per
   assert.match(workspace, />Archived <span>\{archivedEvents\.length\}<\/span>/);
   assert.match(workspace, />Restore<\/button>/);
   assert.match(workspace, /This permanently removes the event/);
+  assert.doesNotMatch(workspace, /Share prep|ShareLinkDialog|shareToken/);
   assert.match(styles, /\.event-library-empty/);
 });

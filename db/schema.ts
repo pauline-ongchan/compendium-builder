@@ -4,7 +4,6 @@ export const eventStates = pgTable("event_states", {
   id: text("id").primaryKey(),
   payload: text("payload").notNull(),
   publishedPayload: text("published_payload"),
-  shareToken: text("share_token").unique(),
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
     .notNull()
     .defaultNow(),
