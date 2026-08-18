@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { publishEventState } from "../app/event-state-client.ts";
+import { deleteEventState, publishEventState, setEventArchived } from "../app/event-state-client.ts";
 
 test("publishes the latest event and returns the persisted version", async () => {
   const draft = { eventId: "event-1", draftChanges: 2, publishedAt: "Yesterday", days: [{ id: "day-1" }] };
@@ -39,5 +39,40 @@ test("rejects a success response that does not return the published version", as
   await assert.rejects(
     publishEventState({ draftChanges: 1, publishedAt: "Yesterday" }, request),
     /published version was not returned/,
+  );
+});
+
+test("archives and restores an event through authenticated event-state mutations", async () => {
+  const calls = [];
+  const request = async (url, options) => {
+    calls.push({ url, options });
+    const { eventId, archived } = JSON.parse(options.body);
+    return Response.json({ state: { eventId, relayMeta: { archivedAt: archived ? "2026-08-17T10:00:00.000Z" : null } } });
+  };
+
+  const archived = await setEventArchived("event 1", true, request);
+  const restored = await setEventArchived("event 1", false, request);
+
+  assert.equal(calls[0].url, "/api/event-state");
+  assert.equal(calls[0].options.method, "PATCH");
+  assert.deepEqual(JSON.parse(calls[0].options.body), { eventId: "event 1", archived: true });
+  assert.equal(archived.relayMeta.archivedAt, "2026-08-17T10:00:00.000Z");
+  assert.equal(restored.relayMeta.archivedAt, null);
+});
+
+test("permanently deletes a specific event and surfaces server failures", async () => {
+  let requestUrl = "";
+  let requestMethod = "";
+  await deleteEventState("event / 1", async (url, options) => {
+    requestUrl = url;
+    requestMethod = options.method;
+    return Response.json({ ok: true });
+  });
+
+  assert.equal(requestUrl, "/api/event-state?event=event%20%2F%201");
+  assert.equal(requestMethod, "DELETE");
+  await assert.rejects(
+    deleteEventState("missing", async () => Response.json({ error: "Event not found" }, { status: 404 })),
+    /Event not found/,
   );
 });

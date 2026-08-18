@@ -24,5 +24,5 @@ test("the workspace renders in-app feedback surfaces", async () => {
   const source = await readFile(new URL("../app/relay-workspace.tsx", import.meta.url), "utf8");
   assert.match(source, /role="alertdialog"/);
   assert.match(source, /className={`toast/);
-  assert.match(source, /ShareLinkDialog/);
+  assert.match(source, /ConfirmationDialog/);
 });
