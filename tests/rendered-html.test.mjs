@@ -75,7 +75,8 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.match(workspace, /Day-of essentials/);
   assert.match(workspace, /Duplicate/);
   assert.match(workspace, /onClick=\{onViewAll\}>Open review/);
-  assert.match(workspace, /Availability conflicts/);
+  assert.match(workspace, /Availability review/);
+  assert.match(workspace, /available and unassigned/);
   assert.doesNotMatch(workspace, /Published \{data\.publishedAt\}/);
   assert.doesNotMatch(workspace, /Last publish \{data\.publishedAt\}/);
   assert.match(workspace, /onInput=\{\(event\) => setDayCountInput\(event\.currentTarget\.value\)\}/);

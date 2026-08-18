@@ -240,6 +240,7 @@ button { color: inherit; }
 .w-flow { background: #d8dfef; }
 .w-workload { background: #eee1ae; }
 .w-unavailable { background: #f1d1cb; color: #7d3028; }
+.w-available { background: #d8eadc; color: #2c6841; }
 .checks-table { border: 1px solid var(--line); border-radius: 7px; background: var(--panel); overflow-x: auto; }
 .checks-table-head, .checks-table-row { display: grid; grid-template-columns: 120px minmax(130px, .7fr) minmax(240px, 1.6fr) minmax(140px, .8fr); align-items: center; }
 .checks-table-head, .checks-table-row, .checks-table-empty { min-width: 680px; }
