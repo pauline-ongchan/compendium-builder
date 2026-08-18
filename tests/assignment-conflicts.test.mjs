@@ -38,3 +38,14 @@ test("ignores the assignment being edited and restores availability after remova
   day.assignments.length = 0;
   assert.equal(findAssignmentConflict(day, "person-2", partial.id), undefined);
 });
+
+test("checks assignment intervals instead of reserving the entire parent event", () => {
+  const day = {
+    blocks: [exact, partial],
+    assignments: [{ id: "assignment-1", personId: "person-1", blockId: exact.id, start: "09:00", end: "09:30" }],
+  };
+
+  assert.equal(findAssignmentConflict(day, "person-1", partial.id), undefined);
+  assert.equal(findAssignmentConflict(day, "person-1", exact.id, undefined, { start: "09:30", end: "10:00" }), undefined);
+  assert.ok(findAssignmentConflict(day, "person-1", exact.id, undefined, { start: "09:15", end: "09:45" }));
+});

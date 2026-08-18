@@ -75,7 +75,8 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.match(workspace, /Day-of essentials/);
   assert.match(workspace, /Duplicate/);
   assert.match(workspace, /onClick=\{onViewAll\}>Open review/);
-  assert.match(workspace, /Availability conflicts/);
+  assert.match(workspace, /Availability review/);
+  assert.match(workspace, /available and unassigned/);
   assert.doesNotMatch(workspace, /Published \{data\.publishedAt\}/);
   assert.doesNotMatch(workspace, /Last publish \{data\.publishedAt\}/);
   assert.match(workspace, /onInput=\{\(event\) => setDayCountInput\(event\.currentTarget\.value\)\}/);
@@ -161,6 +162,8 @@ test("ships Relay product metadata and schedule-first role assignment", async ()
   assert.match(styles, /\.role-match-list article/);
   assert.match(styles, /\.assignment-role-picker\s*\{[^}]*position:\s*fixed/);
   assert.match(styles, /\.setup-dialog\.confirm-dialog/);
+  assert.match(styles, /\.confirm-dialog-body\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*38px minmax\(0, 1fr\)/);
+  assert.match(styles, /\.confirm-dialog-body > span\s*\{[^}]*width:\s*38px;[^}]*place-items:\s*center/);
   assert.match(styles, /\.delete-block\s*\{[^}]*top:\s*39px/);
   assert.doesNotMatch(workspace, /className="stat-strip"/);
   assert.doesNotMatch(workspace, /level:\s*"Lead"|level:\s*"Workload"/);
