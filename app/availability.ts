@@ -11,7 +11,7 @@ export type AvailabilitySlot = {
 type AvailabilityBlock = { id: string; start: string; end: string };
 type AvailabilityDay = { id: string; blocks: AvailabilityBlock[] };
 export type AssignmentBlock = AvailabilityBlock & { label: string };
-export type PersonAssignment = { id: string; personId: string; blockId: string };
+export type PersonAssignment = { id: string; personId: string; blockId: string; start?: string; end?: string };
 export type AssignmentSchedule = { blocks: AssignmentBlock[]; assignments: PersonAssignment[] };
 type AvailabilityPerson = {
   availability: Record<string, Record<string, AvailabilityStatus>>;
@@ -43,19 +43,40 @@ export function blocksOverlap(first: AssignmentBlock, second: AssignmentBlock) {
   return firstStart < secondEnd && secondStart < firstEnd;
 }
 
+export type AssignmentInterval = { start: number; end: number };
+
+export function assignmentInterval(
+  assignment: Pick<PersonAssignment, "start" | "end"> | undefined,
+  block: Pick<AssignmentBlock, "start" | "end">,
+): AssignmentInterval {
+  const blockStart = eventTimeToMinutes(block.start);
+  const blockEnd = eventTimeToMinutes(block.end);
+  const requestedStart = assignment?.start ? eventTimeToMinutes(assignment.start) : Number.NaN;
+  const requestedEnd = assignment?.end ? eventTimeToMinutes(assignment.end) : Number.NaN;
+  const start = Number.isFinite(requestedStart) ? Math.max(blockStart, requestedStart) : blockStart;
+  const end = Number.isFinite(requestedEnd) ? Math.min(blockEnd, requestedEnd) : blockEnd;
+  return end > start ? { start, end } : { start: blockStart, end: blockEnd };
+}
+
+export function intervalsOverlap(first: AssignmentInterval, second: AssignmentInterval) {
+  return first.start < second.end && second.start < first.end;
+}
+
 export function findAssignmentConflict(
   day: AssignmentSchedule,
   personId: string,
   blockId: string,
   ignoredAssignmentId?: string,
+  requestedInterval?: { start: string; end: string },
 ) {
   const targetBlock = day.blocks.find((block) => block.id === blockId);
   if (!targetBlock) return undefined;
+  const targetInterval = assignmentInterval(requestedInterval, targetBlock);
 
   for (const assignment of day.assignments) {
     if (assignment.personId !== personId || assignment.id === ignoredAssignmentId) continue;
     const assignedBlock = day.blocks.find((block) => block.id === assignment.blockId);
-    if (assignedBlock && blocksOverlap(targetBlock, assignedBlock)) {
+    if (assignedBlock && intervalsOverlap(targetInterval, assignmentInterval(assignment, assignedBlock))) {
       return { assignment, block: assignedBlock };
     }
   }
@@ -96,6 +117,40 @@ function overlaps(block: AvailabilityBlock, slot: AvailabilitySlot) {
   const start = eventTimeToMinutes(block.start);
   const end = eventTimeToMinutes(block.end);
   return Number.isFinite(start) && Number.isFinite(end) && slot.start < end && slot.end > start;
+}
+
+export function getAvailableAssignmentIntervals(
+  block: AvailabilityBlock,
+  day: AvailabilityDay,
+  freeSlots: Record<string, boolean>,
+): AssignmentInterval[] {
+  const blockStart = eventTimeToMinutes(block.start);
+  const blockEnd = eventTimeToMinutes(block.end);
+  const intervals: AssignmentInterval[] = [];
+  for (const slot of getAvailabilitySlots(day).filter((item) => overlaps(block, item))) {
+    if (freeSlots[slot.key] !== true) continue;
+    const start = Math.max(blockStart, slot.start);
+    const end = Math.min(blockEnd, slot.end);
+    const previous = intervals.at(-1);
+    if (previous?.end === start) previous.end = end;
+    else intervals.push({ start, end });
+  }
+  return intervals;
+}
+
+export function assignmentAvailabilityFromSlots(
+  block: AvailabilityBlock,
+  day: AvailabilityDay,
+  freeSlots: Record<string, boolean>,
+  requestedInterval?: { start?: string; end?: string },
+): AvailabilityStatus {
+  const interval = assignmentInterval(requestedInterval, block);
+  const relevantSlots = getAvailabilitySlots(day).filter((slot) => slot.start < interval.end && slot.end > interval.start);
+  if (!relevantSlots.length) return "unavailable";
+  const freeCount = relevantSlots.filter((slot) => freeSlots[slot.key] === true).length;
+  if (freeCount === relevantSlots.length) return "available";
+  if (freeCount === 0) return "unavailable";
+  return "conditional";
 }
 
 export function slotsFromLegacyAvailability(

@@ -55,3 +55,25 @@ test("flags only assigned people who are unavailable for that block", () => {
     personId: "angela",
   }]);
 });
+
+test("checks the assigned interval against 30-minute availability slots", () => {
+  const days = [{
+    id: "day-1",
+    label: "Day 1",
+    blocks: [{ id: "opening", label: "Opening", start: "9:00", end: "10:30" }],
+    assignments: [
+      { personId: "jordan", blockId: "opening", role: "Usher", start: "09:30", end: "10:30" },
+      { personId: "taylor", blockId: "opening", role: "MC", start: "09:00", end: "10:30" },
+    ],
+  }];
+  const people = [
+    { id: "jordan", name: "Jordan", availability: { "day-1": { opening: "conditional" } }, availabilitySlots: { "day-1": { "09:00": false, "09:30": true, "10:00": true } } },
+    { id: "taylor", name: "Taylor", availability: { "day-1": { opening: "conditional" } }, availabilitySlots: { "day-1": { "09:00": false, "09:30": true, "10:00": true } } },
+  ];
+
+  const intervalChecks = getAssignmentAvailabilityChecks(days, people);
+  assert.equal(intervalChecks.length, 1);
+  assert.equal(intervalChecks[0].person, "Taylor");
+  assert.equal(intervalChecks[0].level, "Partially unavailable");
+  assert.equal(intervalChecks[0].schedule, "Day 1 · 9:00a–10:30a · Opening");
+});

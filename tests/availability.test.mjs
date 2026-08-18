@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  assignmentAvailabilityFromSlots,
   blockAvailabilityFromSlots,
+  getAvailableAssignmentIntervals,
   getAvailabilitySlots,
   mapTimeAvailabilityToBlocks,
 } from "../app/availability.ts";
@@ -38,4 +40,15 @@ test("recomputes block availability when schedule block boundaries change", () =
   state.days[0].blocks[0].end = "9:00";
   mapTimeAvailabilityToBlocks(state);
   assert.equal(state.people[0].availability["day-1"].setup, "available");
+});
+
+test("builds contiguous available intervals and checks only the assigned range", () => {
+  const ceremony = { id: "ceremony", start: "9:00", end: "10:30" };
+  const ceremonyDay = { id: "day-1", blocks: [ceremony] };
+  const freeSlots = { "09:00": false, "09:30": true, "10:00": true };
+
+  assert.deepEqual(getAvailableAssignmentIntervals(ceremony, ceremonyDay, freeSlots), [{ start: 570, end: 630 }]);
+  assert.equal(assignmentAvailabilityFromSlots(ceremony, ceremonyDay, freeSlots), "conditional");
+  assert.equal(assignmentAvailabilityFromSlots(ceremony, ceremonyDay, freeSlots, { start: "09:30", end: "10:30" }), "available");
+  assert.equal(assignmentAvailabilityFromSlots(ceremony, ceremonyDay, freeSlots, { start: "09:00", end: "09:30" }), "unavailable");
 });
