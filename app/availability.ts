@@ -9,7 +9,12 @@ export type AvailabilitySlot = {
 };
 
 type AvailabilityBlock = { id: string; start: string; end: string };
-type AvailabilityDay = { id: string; blocks: AvailabilityBlock[] };
+type AvailabilityDay = {
+  id: string;
+  blocks: AvailabilityBlock[];
+  availabilityStart?: string;
+  availabilityEnd?: string;
+};
 export type AssignmentBlock = AvailabilityBlock & { label: string };
 export type PersonAssignment = { id: string; personId: string; blockId: string; start?: string; end?: string };
 export type AssignmentSchedule = { blocks: AssignmentBlock[]; assignments: PersonAssignment[] };
@@ -95,8 +100,15 @@ export function formatEventTime(minutes: number) {
 }
 
 export function getAvailabilitySlots(day: AvailabilityDay): AvailabilitySlot[] {
-  const starts = day.blocks.map((block) => eventTimeToMinutes(block.start)).filter(Number.isFinite);
-  const ends = day.blocks.map((block) => eventTimeToMinutes(block.end)).filter(Number.isFinite);
+  const configuredStart = day.availabilityStart ? eventTimeToMinutes(day.availabilityStart) : Number.NaN;
+  const configuredEnd = day.availabilityEnd ? eventTimeToMinutes(day.availabilityEnd) : Number.NaN;
+  const hasConfiguredWindow = Number.isFinite(configuredStart) && Number.isFinite(configuredEnd) && configuredEnd > configuredStart;
+  const starts = hasConfiguredWindow
+    ? [configuredStart]
+    : day.blocks.map((block) => eventTimeToMinutes(block.start)).filter(Number.isFinite);
+  const ends = hasConfiguredWindow
+    ? [configuredEnd]
+    : day.blocks.map((block) => eventTimeToMinutes(block.end)).filter(Number.isFinite);
   if (!starts.length || !ends.length) return [];
   const start = Math.floor(Math.min(...starts) / SLOT_MINUTES) * SLOT_MINUTES;
   const end = Math.ceil(Math.max(...ends) / SLOT_MINUTES) * SLOT_MINUTES;
@@ -159,7 +171,7 @@ export function slotsFromLegacyAvailability(
 ) {
   return Object.fromEntries(getAvailabilitySlots(day).map((slot) => {
     const statuses = day.blocks.filter((block) => overlaps(block, slot)).map((block) => availability?.[block.id] ?? "available");
-    return [slot.key, statuses.every((status) => status !== "unavailable")];
+    return [slot.key, statuses.length > 0 && statuses.every((status) => status !== "unavailable")];
   }));
 }
 

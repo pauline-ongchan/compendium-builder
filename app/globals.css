@@ -285,6 +285,22 @@ button { color: inherit; }
 .people-actions { margin-left: auto; display: flex; gap: 8px; }
 .people-actions .button { margin-left: 0; }
 .availability-grid { --columns: 7; display: grid; grid-template-columns: 190px repeat(var(--columns), minmax(96px, 1fr)); min-width: 940px; }
+.availability-window { padding: 14px 16px; border-bottom: 1px solid var(--ink); display: flex; align-items: end; gap: 18px; flex-wrap: wrap; }
+.availability-window > div:first-child { flex: 1; min-width: 240px; }
+.availability-window h3, .availability-window p { margin: 0; }
+.availability-window h3 { font-size: 14px; }
+.availability-window p { margin-top: 3px; color: var(--muted); font-size: 9px; }
+.availability-window-fields { display: flex; align-items: end; gap: 8px; }
+.availability-window-fields label { display: grid; gap: 4px; color: var(--muted); font-size: 8px; font-weight: 750; text-transform: uppercase; letter-spacing: .08em; }
+.availability-window-fields input { min-height: 36px; border: 1px solid var(--line); border-radius: 6px; background: white; padding: 7px 9px; color: var(--ink); font: inherit; font-size: 10px; }
+.availability-window-fields > span { padding-bottom: 11px; color: var(--muted); font-size: 9px; }
+.availability-window > .field-error { width: 100%; }
+.availability-key { padding: 9px 16px; background: #f5f3ed; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 15px; font-size: 9px; }
+.availability-key span { display: flex; align-items: center; gap: 5px; font-weight: 700; }
+.availability-key i { width: 10px; height: 10px; border-radius: 2px; }
+.availability-key i.available { background: #8fd0a6; }
+.availability-key i.unavailable { background: #ee938a; }
+.availability-key small { margin-left: auto; color: var(--muted); }
 .availability-corner, .availability-head { min-height: 58px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--ink); padding: 10px; }
 .availability-corner { position: sticky; left: 0; z-index: 3; background: var(--panel); color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .1em; display: flex; align-items: end; }
 .availability-head strong, .availability-head small { display: block; }

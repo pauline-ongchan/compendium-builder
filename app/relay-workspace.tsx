@@ -117,6 +117,8 @@ type EventDay = {
   id: string;
   label: string;
   date: string;
+  availabilityStart?: string;
+  availabilityEnd?: string;
   blocks: EventBlock[];
   assignments: Assignment[];
 };
@@ -365,6 +367,11 @@ function timeToMinutes(value: string) {
   return Number.isFinite(minutes) ? minutes : Number.MAX_SAFE_INTEGER;
 }
 
+function eventTimeInputValue(value: string | undefined, fallback: string) {
+  const minutes = eventTimeToMinutes(value ?? fallback);
+  return Number.isFinite(minutes) ? `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}` : fallback;
+}
+
 function sortBlocks(blocks: EventBlock[]) {
   return [...blocks].sort((a, b) => timeToMinutes(a.start) - timeToMinutes(b.start) || timeToMinutes(a.end) - timeToMinutes(b.end) || a.label.localeCompare(b.label));
 }
@@ -452,7 +459,15 @@ function normalizeEvent(raw: EventState): EventState {
         end: assignment.end,
       };
     });
-    return { ...day, blocks, assignments };
+    const earliestBlock = blocks.reduce<EventBlock | undefined>((earliest, block) => !earliest || timeToMinutes(block.start) < timeToMinutes(earliest.start) ? block : earliest, undefined);
+    const latestBlock = blocks.reduce<EventBlock | undefined>((latest, block) => !latest || timeToMinutes(block.end) > timeToMinutes(latest.end) ? block : latest, undefined);
+    return {
+      ...day,
+      availabilityStart: day.availabilityStart ?? earliestBlock?.start ?? "9:00 AM",
+      availabilityEnd: day.availabilityEnd ?? latestBlock?.end ?? "5:00 PM",
+      blocks,
+      assignments,
+    };
   });
   const normalized: EventState = {
     ...raw,
@@ -498,6 +513,8 @@ function createBlankEvent(values: { name: string; type: string; venue: string; s
     id: `${eventId}-day-${index + 1}`,
     label: `Day ${index + 1}`,
     date: dateForDay(index),
+    availabilityStart: "9:00 AM",
+    availabilityEnd: "5:00 PM",
     blocks: [],
     assignments: [],
   }));
@@ -1107,25 +1124,27 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
     window.localStorage.setItem(`relay:v1:exec-person:${(publishedData ?? data).eventId}`, personId);
   };
 
-  const cycleBlockAvailability = (personId: string, blockId: string) => {
+  const toggleAvailabilitySlot = (personId: string, slotKey: string) => {
     const previous = structuredClone(data);
     const next = structuredClone(data);
     const day = next.days.find((item) => item.id === dayId)!;
-    const block = day.blocks.find((item) => item.id === blockId)!;
     const person = next.people.find((item) => item.id === personId)!;
-    const blockStart = eventTimeToMinutes(block.start);
-    const blockEnd = eventTimeToMinutes(block.end);
-    const relevantSlots = getAvailabilitySlots(day).filter((slot) => slot.start < blockEnd && slot.end > blockStart);
-    const current = person.availability[day.id]?.[block.id] ?? "unavailable";
-    const requested: AvailabilityStatus = current === "unavailable" ? "available" : current === "available" ? "conditional" : "unavailable";
-    const status: AvailabilityStatus = requested === "conditional" && relevantSlots.length < 2 ? "unavailable" : requested;
     person.availabilitySlots ??= {};
     person.availabilitySlots[day.id] ??= {};
-    relevantSlots.forEach((slot, index) => {
-      person.availabilitySlots![day.id][slot.key] = status === "available" || (status === "conditional" && index < Math.ceil(relevantSlots.length / 2));
-    });
+    const available = person.availabilitySlots[day.id][slotKey] !== true;
+    person.availabilitySlots[day.id][slotKey] = available;
     next.draftChanges += 1;
-    void save(next, `${person.name} marked ${status} for ${block.label}.`, previous);
+    void save(next, `${person.name} marked ${available ? "available" : "unavailable"} at ${formatEventTime(eventTimeToMinutes(slotKey))}.`, previous);
+  };
+
+  const saveAvailabilityWindow = (start: string, end: string) => {
+    const previous = structuredClone(data);
+    const next = structuredClone(data);
+    const day = next.days.find((item) => item.id === dayId)!;
+    day.availabilityStart = start;
+    day.availabilityEnd = end;
+    next.draftChanges += 1;
+    void save(next, `${day.label} availability now runs from ${start} to ${end}.`, previous);
   };
 
   async function openExecView(eventId = data.eventId) {
@@ -1520,7 +1539,7 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
 
             {section === "schedule" && <ScheduleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} warnings={warnings} reviewTarget={scheduleReviewTarget} selectedRoles={selectedRoles} boardLocked={boardLocked} roleTemplates={roleTemplates} onToggleLock={toggleBoardLock} onSelectRole={toggleSelectedRole} onCell={changeAssignment} onAssignRole={assignBlockRoleToPerson} onEditInterval={(assignment) => setAssignmentIntervalEditor({ blockId: assignment.blockId, personId: assignment.personId, blockRoleId: assignment.blockRoleId, assignmentId: assignment.id })} onClearAssignment={clearAssignment} onMoveAssignment={moveAssignment} onAddRole={addScheduleRoleToBlock} onCreateRole={createAndAddRole} onEditRole={(blockId, blockRoleId) => setRoleEditor({ blockId, blockRoleId })} onRemoveRole={requestBlockRoleRemoval} onAssignRest={assignRestToOnCall} onAddBlock={() => setBlockEditor({})} onImport={() => setShowScheduleImport(true)} onEditBlock={(blockId) => setBlockEditor({ blockId })} onDuplicateBlock={duplicateBlock} onDeleteBlock={setDeleteBlockId} onReview={reviewScheduleCheck} onViewAll={() => setShowScheduleChecks(true)} />}
             {section === "prep" && <PrepView data={data} onSave={savePrep} onShare={sharePrep} />}
-            {section === "people" && <PeopleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} onAvailability={cycleBlockAvailability} />}
+            {section === "people" && <PeopleView key={`${activeDay.id}-${activeDay.availabilityStart}-${activeDay.availabilityEnd}`} data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} onAvailability={toggleAvailabilitySlot} onWindowChange={saveAvailabilityWindow} />}
             {section === "roles" && <RolesView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} roleTemplates={roleTemplates} onOpen={(blockId, blockRoleId) => setRoleEditor({ blockId, blockRoleId })} onEditBlock={(blockId) => setBlockEditor({ blockId })} onAddRoleToBlock={addLibraryRoleToBlock} onCreateRole={() => setRoleTemplateEditor({})} onEditRole={(templateId) => setRoleTemplateEditor({ templateId })} onImport={() => setShowRoleImport(true)} />}
             {section === "judging" && <JudgingView data={data} onCycle={cycleJudgingStatus} />}
             {section === "resources" && <ResourcesView data={data} onSave={saveOverview} />}
@@ -1870,10 +1889,24 @@ function PrepView({ data, onSave, onShare }: { data: EventState; onSave: (sessio
   return <div className="content"><div className="section-title compact"><div><span className="kicker">Before the event</span><h2>Prep mini-compendium</h2><p>Plan the working sessions, collect availability, and keep every packing, printing, and walkthrough task in one place.</p></div><div className="prep-header-actions"><button className="button secondary" onClick={onShare}>Share prep</button><button className="button primary" onClick={() => onSave(sessions, tasks, availability)}>Save prep plan</button></div></div><div className="prep-summary"><div><strong>{sessions.length}</strong><span>prep sessions</span></div><div><strong>{tasks.filter((task) => task.done).length}/{tasks.length}</strong><span>tasks complete</span></div><div><strong>{new Set(tasks.map((task) => task.ownerPersonId).filter(Boolean)).size}</strong><span>people owning work</span></div></div><div className="prep-workspace"><section className="prep-panel"><div className="form-section-head"><div><h3>Prep sessions</h3><p>Usually scheduled a few days before the event.</p></div><button onClick={() => setSessions((current) => [...current, { id: `prep-session-${Date.now()}`, label: "New prep session", date: "", start: "5:00 PM", end: "7:00 PM", location: "" }])}>+ Add session</button></div><div className="prep-session-list">{sessions.map((session) => <article key={session.id}><input value={session.label} aria-label="Session name" onChange={(event) => updateSession(session.id, { label: event.target.value })} /><input type="date" value={session.date} aria-label={`${session.label} date`} onChange={(event) => updateSession(session.id, { date: event.target.value })} /><input value={session.start} aria-label={`${session.label} start time`} onChange={(event) => updateSession(session.id, { start: event.target.value })} /><input value={session.end} aria-label={`${session.label} end time`} onChange={(event) => updateSession(session.id, { end: event.target.value })} /><input value={session.location} placeholder="Location" aria-label={`${session.label} location`} onChange={(event) => updateSession(session.id, { location: event.target.value })} /><button onClick={() => { setSessions((current) => current.filter((item) => item.id !== session.id)); setTasks((current) => current.map((task) => task.sessionId === session.id ? { ...task, sessionId: "" } : task)); }} aria-label={`Remove ${session.label}`}>×</button></article>)}</div></section><section className="prep-panel prep-tasks"><div className="form-section-head"><div><h3>Prep checklist</h3><p>This becomes the working mini-compendium for the prep team.</p></div><button onClick={() => setTasks((current) => [...current, { id: `prep-task-${Date.now()}`, label: "New prep task", done: false, ownerPersonId: "", sessionId: sessions[0]?.id ?? "", notes: "" }])}>+ Add task</button></div><div className="prep-task-list">{tasks.map((task) => <article className={task.done ? "done" : ""} key={task.id}><input type="checkbox" checked={task.done} aria-label={`Mark ${task.label} complete`} onChange={(event) => updateTask(task.id, { done: event.target.checked })} /><div><input value={task.label} aria-label="Task" onChange={(event) => updateTask(task.id, { label: event.target.value })} /><input value={task.notes} placeholder="Instructions or items needed" aria-label={`${task.label} notes`} onChange={(event) => updateTask(task.id, { notes: event.target.value })} /></div><select value={task.ownerPersonId} aria-label={`${task.label} owner`} onChange={(event) => updateTask(task.id, { ownerPersonId: event.target.value })}><option value="">No owner</option>{data.people.map((person) => <option value={person.id} key={person.id}>{person.name}</option>)}</select><select value={task.sessionId} aria-label={`${task.label} session`} onChange={(event) => updateTask(task.id, { sessionId: event.target.value })}><option value="">No session</option>{sessions.map((session) => <option value={session.id} key={session.id}>{session.label}</option>)}</select><button onClick={() => setTasks((current) => current.filter((item) => item.id !== task.id))} aria-label={`Remove ${task.label}`}>×</button></article>)}</div></section></div><section className="prep-panel prep-availability"><div className="form-section-head"><div><h3>Prep availability</h3><p>Click a cell to cycle through available, conditional, and unavailable.</p></div></div>{sessions.length ? <div className="availability-scroll"><div className="prep-availability-grid" style={{ "--prep-columns": sessions.length } as React.CSSProperties}><div className="availability-corner">Exec</div>{sessions.map((session) => <div className="availability-head" key={session.id}><strong>{session.label}</strong><small>{session.date || "Date TBD"} · {session.start}</small></div>)}{data.people.map((person) => <div className="availability-row" key={person.id}><div className="availability-person"><PersonAvatar person={person} small /><div><strong>{person.name}</strong><small>{person.team}</small></div></div>{sessions.map((session) => { const status = availability[person.id]?.[session.id] ?? "available"; return <button key={session.id} className={`availability-block ${status}`} onClick={() => cycleAvailability(person.id, session.id)}><span>{status === "available" ? "✓" : status === "conditional" ? "~" : "×"}</span></button>; })}</div>)}</div></div> : <p className="empty-copy">Add a prep session to collect availability.</p>}</section></div>;
 }
 
-function PeopleView({ data, activeDay, dayId, setDayId, onAvailability }: { data: EventState; activeDay: EventDay; dayId: string; setDayId: (id: string) => void; onAvailability: (personId: string, blockId: string) => void }) {
+function PeopleView({ data, activeDay, dayId, setDayId, onAvailability, onWindowChange }: { data: EventState; activeDay: EventDay; dayId: string; setDayId: (id: string) => void; onAvailability: (personId: string, slotKey: string) => void; onWindowChange: (start: string, end: string) => void }) {
   const alphabetizedPeople = sortPeopleAlphabetically(data.people);
+  const [start, setStart] = useState(() => eventTimeInputValue(activeDay.availabilityStart, "09:00"));
+  const [end, setEnd] = useState(() => eventTimeInputValue(activeDay.availabilityEnd, "17:00"));
+  const slots = getAvailabilitySlots(activeDay);
+  const startMinutes = eventTimeToMinutes(start);
+  const endMinutes = eventTimeToMinutes(end);
+  const alignedWindow = startMinutes % 30 === 0 && endMinutes % 30 === 0;
+  const validWindow = Number.isFinite(startMinutes) && Number.isFinite(endMinutes) && alignedWindow && endMinutes > startMinutes;
+  const savedStart = eventTimeInputValue(activeDay.availabilityStart, "09:00");
+  const savedEnd = eventTimeInputValue(activeDay.availabilityEnd, "17:00");
+  const windowChanged = start !== savedStart || end !== savedEnd;
   return <div className="content"><div className="section-title compact"><div><span className="kicker">People</span><h2>Event availability</h2><p>The universal roster is managed in Settings. Availability stays specific to this event and maps automatically to schedule blocks.</p></div><DayToggle data={data} dayId={dayId} setDayId={setDayId} /></div>
-    <section className="availability-card"><div className="availability-scroll"><div className="availability-grid" style={{ "--columns": activeDay.blocks.length } as React.CSSProperties}><div className="availability-corner">Exec</div>{activeDay.blocks.map((block) => <div className="availability-head" key={block.id}><strong>{block.short}</strong><small>{block.start}–{block.end}</small></div>)}{alphabetizedPeople.map((person) => <div className="availability-row" key={person.id}><div className="availability-person"><PersonAvatar person={person} small /><div><strong>{person.name}</strong><small>{person.team}</small></div></div>{activeDay.blocks.map((block) => { const status = person.availability[activeDay.id]?.[block.id] ?? "unavailable"; const label = status === "available" ? "Free for the full block" : status === "conditional" ? "Free for part of the block" : "Not free for this block"; return <button type="button" key={block.id} className={`availability-block ${status}`} title={`${block.label}: ${label}. Click to change.`} aria-label={`${person.name}, ${block.label}: ${label}. Click to change.`} onClick={() => onAvailability(person.id, block.id)}><span>{status === "available" ? "✓" : status === "conditional" ? "~" : "×"}</span></button>; })}</div>)}</div></div></section>
+    <section className="availability-card">
+      <header className="availability-window"><div><h3>Availability window</h3><p>Set the times people can respond to, even before the schedule is imported.</p></div><div className="availability-window-fields"><label>Start<input type="time" step="1800" value={start} onChange={(event) => setStart(event.target.value)} /></label><span>to</span><label>End<input type="time" step="1800" value={end} onChange={(event) => setEnd(event.target.value)} /></label><button className="button secondary" disabled={!validWindow || !windowChanged} onClick={() => onWindowChange(start, end)}>Update blocks</button></div>{!validWindow ? <small className="field-error" role="alert">{alignedWindow ? "End time must be later than start time." : "Use times ending in :00 or :30."}</small> : null}</header>
+      <div className="availability-key"><span><i className="available" /> Available</span><span><i className="unavailable" /> Unavailable</span><small>Each response covers exactly 30 minutes. Schedule blocks will summarize the slots they overlap.</small></div>
+      <div className="availability-scroll"><div className="availability-grid" style={{ "--columns": slots.length } as React.CSSProperties}><div className="availability-corner">Exec</div>{slots.map((slot) => <div className="availability-head" key={slot.key}><strong>{slot.label}</strong><small>to {slot.endLabel}</small></div>)}{alphabetizedPeople.map((person) => <div className="availability-row" key={person.id}><div className="availability-person"><PersonAvatar person={person} small /><div><strong>{person.name}</strong><small>{person.team}</small></div></div>{slots.map((slot) => { const available = person.availabilitySlots?.[activeDay.id]?.[slot.key] === true; const status = available ? "available" : "unavailable"; const label = available ? "Available" : "Unavailable"; return <button type="button" key={slot.key} className={`availability-block ${status}`} title={`${slot.label}–${slot.endLabel}: ${label}. Click to change.`} aria-pressed={available} aria-label={`${person.name}, ${slot.label} to ${slot.endLabel}: ${label}. Click to change.`} onClick={() => onAvailability(person.id, slot.key)}><span>{available ? "✓" : "×"}</span></button>; })}</div>)}</div></div>
+    </section>
   </div>;
 }
 
