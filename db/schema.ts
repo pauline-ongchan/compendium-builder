@@ -1,4 +1,4 @@
-import { integer, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { boolean, integer, pgTable, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
 
 export const eventStates = pgTable("event_states", {
   id: text("id").primaryKey(),
@@ -27,3 +27,34 @@ export const roleTemplates = pgTable("role_templates", {
     .defaultNow(),
   updatedBy: text("updated_by"),
 });
+
+export const rosterGroups = pgTable("roster_groups", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  color: text("color").notNull().default("#d8d2ef"),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  updatedBy: text("updated_by"),
+});
+
+export const rosterPeople = pgTable("roster_people", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  initials: text("initials").notNull().default(""),
+  phone: text("phone").notNull().default(""),
+  email: text("email").notNull().default(""),
+  color: text("color").notNull().default("#d8d2ef"),
+  groupId: text("group_id"),
+  preferences: text("preferences").notNull().default("[]"),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  updatedBy: text("updated_by"),
+});
+
+export const eventAvailability = pgTable("event_availability", {
+  eventId: text("event_id").notNull(),
+  personId: text("person_id").notNull(),
+  dayId: text("day_id").notNull(),
+  slotKey: text("slot_key").notNull(),
+  available: boolean("available").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  updatedBy: text("updated_by"),
+}, (table) => [primaryKey({ columns: [table.eventId, table.personId, table.dayId, table.slotKey] })]);

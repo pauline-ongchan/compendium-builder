@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { isRoleSnapshotCustomized, normalizeRoleName, parseRoleImportCsv, replaceRoleTemplateSource, similarRoleTemplates } from "../app/role-library.ts";
+import { isRoleSnapshotCustomized, mergeRoleSources, normalizeRoleName, parseRoleImportCsv, replaceRoleTemplateSource, similarRoleTemplates } from "../app/role-library.ts";
 
 test("normalizes equivalent role names to one canonical identity", () => {
   assert.equal(normalizeRoleName(" On-call "), "oncall");
@@ -47,4 +47,12 @@ test("marks only reusable role fields as customized", () => {
   const template = { id: "food", name: "Food Team", description: "Serve food", color: "#aabbcc" };
   assert.equal(isRoleSnapshotCustomized({ name: "Food Team", description: "Serve food", color: "#aabbcc", leadPersonId: "person-1" }, template), false);
   assert.equal(isRoleSnapshotCustomized({ name: "Food Team", description: "Serve tacos", color: "#aabbcc" }, template), true);
+});
+
+test("adds event roles to schedule search without leaking them into another event", () => {
+  const master = [{ id: "master-food", name: "Food Team", description: "Serve food" }];
+  const misNight = [{ id: "mis-room-setup", name: "Room Setup", description: "Reset the room" }];
+
+  assert.deepEqual(mergeRoleSources(master, misNight).map((role) => role.name), ["Food Team", "Room Setup"]);
+  assert.deepEqual(mergeRoleSources(master, []).map((role) => role.name), ["Food Team"]);
 });
