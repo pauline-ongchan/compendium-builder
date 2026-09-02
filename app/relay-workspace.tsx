@@ -15,13 +15,15 @@ import {
   slotsFromLegacyAvailability,
   type AvailabilityStatus,
 } from "./availability";
+import { AVAILABILITY_IDLE_SAVE_MS, AVAILABILITY_MAX_SAVE_MS, AVAILABILITY_REFRESH_MS, availabilityBatchKey } from "./availability-batching";
 import { deleteEventState, publishEventState, setEventArchived } from "./event-state-client";
 import { parseScheduleTable } from "./schedule-import";
 import { getAssignmentAvailabilityChecks, getScheduleChecksViewState, type ScheduleCheck } from "./schedule-checks";
 import { getPublicationStatus } from "./publication-status";
 import { validateDayCount } from "./event-setup";
+import { colorBlocksByTime, scheduleTimeColor } from "./schedule-colors";
 import { moveRoleOptionIndex, nextRoleColor, roleColor } from "./role-presentation";
-import { isRoleSnapshotCustomized, normalizeRoleName, parseRoleImportCsv, roleImportCsvTemplate, similarRoleTemplates, type RoleImportRow, type SharedRoleTemplate } from "./role-library";
+import { isRoleSnapshotCustomized, mergeRoleSources, normalizeRoleName, parseRoleImportCsv, roleImportCsvTemplate, similarRoleTemplates, type RoleImportRow, type SharedRoleTemplate } from "./role-library";
 import { assignmentForMoment, mergeConsecutiveAssignments, sortAssignmentsByTime } from "./exec-view";
 
 type Section = "schedule" | "prep" | "people" | "roles" | "judging" | "resources" | "settings";
@@ -154,6 +156,8 @@ type EventState = {
   judgingRooms: JudgingRoom[];
   relayMeta?: RelayMeta;
 };
+
+type AvailabilityChange = { personId: string; dayId: string; slotKey: string; available: boolean };
 
 function isEventArchived(event: EventState) {
   return Boolean(event.relayMeta?.archivedAt);
@@ -379,6 +383,10 @@ function sortBlocks(blocks: EventBlock[]) {
   return [...blocks].sort((a, b) => timeToMinutes(a.start) - timeToMinutes(b.start) || timeToMinutes(a.end) - timeToMinutes(b.end) || a.label.localeCompare(b.label));
 }
 
+function normalizeBlockColors(blocks: EventBlock[]) {
+  return colorBlocksByTime(sortBlocks(blocks), timeToMinutes);
+}
+
 function assignmentTimeLabel(assignment: Pick<Assignment, "start" | "end">, block: Pick<EventBlock, "start" | "end">) {
   const interval = assignmentInterval(assignment, block);
   return `${formatEventTime(interval.start)}–${formatEventTime(interval.end)}`;
@@ -409,7 +417,7 @@ function normalizeEvent(raw: EventState): EventState {
   }));
   const prepSessions = raw.prepSessions ?? [];
   const days = raw.days.map((day) => {
-    const blocks = sortBlocks(day.blocks.map((block) => ({
+    const blocks = normalizeBlockColors(day.blocks.map((block) => ({
       id: block.id,
       label: block.label,
       short: block.short,
@@ -553,7 +561,7 @@ function dataSafePeopleGroups(people: Person[]): ExecGroup[] {
   return names.map((name, index) => ({ id: name.toLowerCase().replace(/[^a-z0-9]+/g, "-"), name, color: ["#dfef79", "#7f99ff", "#b9a7ff", "#f8bb65"][index % 4] }));
 }
 
-function mergeUniversalRoster(event: EventState, people: Person[], groups: ExecGroup[]): EventState {
+function mergeUniversalRoster(event: EventState, people: Person[], groups: ExecGroup[], markDraft = true): EventState {
   const next = structuredClone(event);
   next.groups = structuredClone(groups);
   const incoming = new Map(people.map((person) => [person.id, person]));
@@ -586,8 +594,26 @@ function mergeUniversalRoster(event: EventState, people: Person[], groups: ExecG
   const retainedPersonIds = new Set(people.map((person) => person.id));
   for (const day of next.days) day.assignments = day.assignments.filter((assignment) => retainedPersonIds.has(assignment.personId));
   next.prepTasks = next.prepTasks.map((task) => retainedPersonIds.has(task.ownerPersonId) ? task : { ...task, ownerPersonId: "" });
-  next.draftChanges += 1;
+  if (markDraft) next.draftChanges += 1;
   return normalizeEvent(next);
+}
+
+function availabilityChangeKey(change: Pick<AvailabilityChange, "personId" | "dayId" | "slotKey">) {
+  return availabilityBatchKey(change);
+}
+
+function applyAvailabilityChanges(event: EventState, changes: AvailabilityChange[], protectedKeys = new Set<string>()) {
+  if (!changes.length) return event;
+  const next = structuredClone(event);
+  for (const change of changes) {
+    if (protectedKeys.has(availabilityChangeKey(change))) continue;
+    const person = next.people.find((item) => item.id === change.personId);
+    if (!person || !next.days.some((day) => day.id === change.dayId)) continue;
+    person.availabilitySlots ??= {};
+    person.availabilitySlots[change.dayId] ??= {};
+    person.availabilitySlots[change.dayId][change.slotKey] = change.available;
+  }
+  return mapTimeAvailabilityToBlocks(next);
 }
 
 function initialsFor(name: string) {
@@ -595,7 +621,6 @@ function initialsFor(name: string) {
 }
 
 function parseScheduleText(text: string, dayId: string): EventBlock[] {
-  const colors = ["#f3c8cf", "#d8d2ef", "#c5dfd7", "#f7e0a7", "#f3d9bc", "#c8e1ef", "#d1e4e7"];
   const seed = Date.now();
   return parseScheduleTable(text).map((block, index) => ({
     id: `${dayId}-import-${seed}-${index}`,
@@ -604,7 +629,7 @@ function parseScheduleText(text: string, dayId: string): EventBlock[] {
     start: block.start,
     end: block.end,
     location: block.location,
-    color: colors[index % colors.length],
+    color: scheduleTimeColor(index),
     requiredRoles: [],
     roles: [],
     links: [],
@@ -660,10 +685,20 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
   const [undoState, setUndoState] = useState<EventState | null>(null);
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [availabilitySaveState, setAvailabilitySaveState] = useState<"saved" | "pending" | "saving" | "error">("saved");
   const [loadingPublished, setLoadingPublished] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [confirmation, setConfirmation] = useState<ConfirmationRequest | null>(null);
   const confirmationResolver = useRef<((confirmed: boolean) => void) | null>(null);
+  const dataRef = useRef(data);
+  const availabilityPendingRef = useRef(new Map<string, AvailabilityChange>());
+  const availabilityInFlightRef = useRef(new Set<string>());
+  const availabilityBatchEventRef = useRef(data.eventId);
+  const availabilityIdleTimerRef = useRef<number | null>(null);
+  const availabilityMaxTimerRef = useRef<number | null>(null);
+  const availabilitySavingRef = useRef(false);
+  const availabilityCursorRef = useRef("");
+  const flushAvailabilityRef = useRef<() => Promise<void>>(async () => {});
 
   const requestConfirmation = (request: ConfirmationRequest) => new Promise<boolean>((resolve) => {
     confirmationResolver.current?.(false);
@@ -682,6 +717,86 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
     setToast(message);
     window.setTimeout(() => { setToast(""); setToastError(false); }, 4800);
   };
+
+  const clearAvailabilityTimers = () => {
+    if (availabilityIdleTimerRef.current !== null) window.clearTimeout(availabilityIdleTimerRef.current);
+    if (availabilityMaxTimerRef.current !== null) window.clearTimeout(availabilityMaxTimerRef.current);
+    availabilityIdleTimerRef.current = null;
+    availabilityMaxTimerRef.current = null;
+  };
+
+  const flushAvailability = async () => {
+    if (availabilitySavingRef.current || !availabilityPendingRef.current.size) return;
+    clearAvailabilityTimers();
+    const eventId = availabilityBatchEventRef.current;
+    const batch = Array.from(availabilityPendingRef.current.values());
+    availabilityPendingRef.current.clear();
+    availabilityInFlightRef.current = new Set(batch.map(availabilityChangeKey));
+    availabilitySavingRef.current = true;
+    setAvailabilitySaveState("saving");
+    try {
+      const response = await fetch("/api/availability", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ eventId, changes: batch }), keepalive: true });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? `HTTP ${response.status}`);
+      setAvailabilitySaveState(availabilityPendingRef.current.size ? "pending" : "saved");
+    } catch (error) {
+      for (const change of batch) if (!availabilityPendingRef.current.has(availabilityChangeKey(change))) availabilityPendingRef.current.set(availabilityChangeKey(change), change);
+      setAvailabilitySaveState("error");
+      showError(`Availability save failed: ${error instanceof Error ? error.message : "Your changes will be retried."}`);
+    } finally {
+      availabilitySavingRef.current = false;
+      availabilityInFlightRef.current.clear();
+      if (availabilityPendingRef.current.size) {
+        availabilityIdleTimerRef.current = window.setTimeout(() => void flushAvailability(), AVAILABILITY_IDLE_SAVE_MS);
+        availabilityMaxTimerRef.current = window.setTimeout(() => void flushAvailability(), AVAILABILITY_MAX_SAVE_MS);
+      }
+    }
+  };
+
+  const queueAvailabilityChange = (eventId: string, change: AvailabilityChange) => {
+    if (availabilityBatchEventRef.current !== eventId && availabilityPendingRef.current.size) void flushAvailability();
+    availabilityBatchEventRef.current = eventId;
+    availabilityPendingRef.current.set(availabilityChangeKey(change), change);
+    setAvailabilitySaveState("pending");
+    if (availabilityIdleTimerRef.current !== null) window.clearTimeout(availabilityIdleTimerRef.current);
+    availabilityIdleTimerRef.current = window.setTimeout(() => void flushAvailability(), AVAILABILITY_IDLE_SAVE_MS);
+    if (availabilityMaxTimerRef.current === null) availabilityMaxTimerRef.current = window.setTimeout(() => void flushAvailability(), AVAILABILITY_MAX_SAVE_MS);
+  };
+  useEffect(() => { flushAvailabilityRef.current = flushAvailability; });
+  useEffect(() => { dataRef.current = data; }, [data]);
+
+  useEffect(() => {
+    if (!hydrated || mode !== "director" || !["schedule", "people"].includes(section)) return;
+    let cancelled = false;
+    const refresh = async () => {
+      const query = new URLSearchParams({ event: dataRef.current.eventId });
+      if (availabilityCursorRef.current) query.set("since", availabilityCursorRef.current);
+      const response = await fetch(`/api/availability?${query.toString()}`, { cache: "no-store" });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || cancelled) return;
+      availabilityCursorRef.current = payload.serverTime ?? availabilityCursorRef.current;
+      const changes = (payload.changes ?? []) as AvailabilityChange[];
+      if (!changes.length) return;
+      const protectedKeys = new Set([...availabilityPendingRef.current.keys(), ...availabilityInFlightRef.current]);
+      setData((current) => {
+        const next = applyAvailabilityChanges(current, changes, protectedKeys);
+        dataRef.current = next;
+        return next;
+      });
+      setEventLibrary((current) => current.map((event) => event.eventId === dataRef.current.eventId ? applyAvailabilityChanges(event, changes, protectedKeys) : event));
+    };
+    void refresh();
+    const interval = window.setInterval(() => void refresh(), AVAILABILITY_REFRESH_MS);
+    const onFocus = () => void refresh();
+    window.addEventListener("focus", onFocus);
+    return () => { cancelled = true; window.clearInterval(interval); window.removeEventListener("focus", onFocus); };
+  }, [hydrated, mode, section, data.eventId]);
+
+  useEffect(() => {
+    const flushBeforeLeave = () => void flushAvailabilityRef.current();
+    window.addEventListener("pagehide", flushBeforeLeave);
+    return () => { window.removeEventListener("pagehide", flushBeforeLeave); void flushAvailabilityRef.current(); };
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -718,16 +833,26 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
         return payload;
       }),
       fetch("/api/role-library").then((response) => response.ok ? response.json() : { roles: [] }),
+      fetch("/api/roster").then((response) => response.ok ? response.json() : { people: [], groups: [] }),
     ])
-      .then(([payload, rolePayload]) => {
-        const activeStates = (payload.states ?? (payload.state ? [payload.state] : [])).map((state: EventState) => normalizeEvent(state));
-        const archivedStates = (payload.archivedStates ?? []).map((state: EventState) => normalizeEvent(state));
+      .then(([payload, rolePayload, rosterPayload]) => {
+        const rosterGroups = (rosterPayload.groups ?? []) as ExecGroup[];
+        const rosterPeople = ((rosterPayload.people ?? []) as Array<Partial<Person> & Pick<Person, "id" | "name">>).map((person): Person => ({
+          id: person.id, name: person.name, initials: person.initials ?? initialsFor(person.name), team: person.team ?? "Unassigned", color: person.color ?? "#d8d2ef",
+          preferences: person.preferences ?? [], privateNote: "", phone: person.phone ?? "", email: person.email ?? "", groupIds: person.groupIds ?? [], availability: {}, availabilitySlots: {}, prepAvailability: {},
+        }));
+        const hydrate = (state: EventState) => {
+          const normalized = normalizeEvent(state);
+          return rosterPeople.length ? mergeUniversalRoster(normalized, rosterPeople, rosterGroups, false) : normalized;
+        };
+        const activeStates = (payload.states ?? (payload.state ? [payload.state] : [])).map(hydrate);
+        const archivedStates = (payload.archivedStates ?? []).map(hydrate);
         const states = [...activeStates, ...archivedStates];
         const remoteRoles = (rolePayload.roles ?? []) as RoleTemplate[];
         if (states.length) {
           const initial = activeStates.find((state: EventState) => state.eventId === requestedEventId) ?? activeStates[0] ?? archivedStates.find((state: EventState) => state.eventId === requestedEventId) ?? archivedStates[0];
           const mergedRoles = new Map<string, RoleTemplate>();
-          const librarySources = remoteRoles.length ? [...builtInRoleTemplates, ...remoteRoles] : [...builtInRoleTemplates, ...initial.roleLibrary];
+          const librarySources = remoteRoles.length ? remoteRoles : builtInRoleTemplates;
           for (const role of librarySources) {
             const normalizedName = role.normalizedName || normalizeRoleName(role.name);
             mergedRoles.set(normalizedName, { ...role, normalizedName, revision: role.revision || 1 });
@@ -802,6 +927,9 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
   const activeDay = data.days.find((day) => day.id === dayId) ?? data.days[0];
   const publication = getPublicationStatus(data.publishedAt);
   const warnings = useMemo(() => getAssignmentAvailabilityChecks(data.days, data.people), [data]);
+  const scheduleRoleTemplates = useMemo(() => {
+    return mergeRoleSources(roleTemplates, data.roleLibrary);
+  }, [roleTemplates, data.roleLibrary]);
 
   const publish = async () => {
     setPublishing(true);
@@ -962,6 +1090,7 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
   };
 
   const addScheduleRoleToBlock = async (blockId: string, template: RoleTemplate, personId?: string, linkedToLibrary = true) => {
+    linkedToLibrary = linkedToLibrary && roleTemplates.some((role) => role.id === template.id);
     let needsIntervalChoice = false;
     if (personId) {
       const person = data.people.find((item) => item.id === personId)!;
@@ -981,15 +1110,16 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
     const next = structuredClone(data);
     const day = next.days.find((item) => item.id === dayId)!;
     const block = day.blocks.find((item) => item.id === blockId)!;
-    const existing = blockRoles(block).find((role) => (linkedToLibrary && role.templateId === template.id) || normalizeRoleName(role.name) === normalizeRoleName(template.name));
+    const existing = blockRoles(block).find((role) => role.templateId === template.id || normalizeRoleName(role.name) === normalizeRoleName(template.name));
     if (existing) {
       if (personId) assignBlockRoleToPerson(blockId, personId, existing.id);
       else setSelectedRoles((current) => ({ ...current, [blockId]: existing.id }));
       return;
     }
-    const role: BlockRole = { id: `${blockId}-${template.id || roleTemplateId(template.name)}-${Date.now()}`, templateId: linkedToLibrary ? template.id : "", templateRevision: linkedToLibrary ? template.revision || 1 : undefined, customized: false, name: template.name, description: template.description || `Support ${block.label}.`, leadPersonId: "", color: template.color || roleColor(template.name) };
+    const role: BlockRole = { id: `${blockId}-${template.id || roleTemplateId(template.name)}-${Date.now()}`, templateId: template.id, templateRevision: linkedToLibrary ? template.revision || 1 : undefined, customized: false, name: template.name, description: template.description || `Support ${block.label}.`, leadPersonId: "", color: template.color || roleColor(template.name) };
     block.roles = [...blockRoles(block), role];
     block.requiredRoles = block.roles.map((item) => item.name);
+    if (!next.roleLibrary.some((item) => item.id === template.id || normalizeRoleName(item.name) === normalizeRoleName(template.name))) next.roleLibrary.push({ ...template, revision: linkedToLibrary ? template.revision : undefined });
     if (personId) {
       const person = next.people.find((item) => item.id === personId)!;
       if (needsIntervalChoice) {
@@ -1135,16 +1265,19 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
   };
 
   const toggleAvailabilitySlot = (personId: string, slotKey: string) => {
-    const previous = structuredClone(data);
-    const next = structuredClone(data);
+    const current = dataRef.current;
+    const next = structuredClone(current);
     const day = next.days.find((item) => item.id === dayId)!;
     const person = next.people.find((item) => item.id === personId)!;
     person.availabilitySlots ??= {};
     person.availabilitySlots[day.id] ??= {};
     const available = person.availabilitySlots[day.id][slotKey] !== true;
     person.availabilitySlots[day.id][slotKey] = available;
-    next.draftChanges += 1;
-    void save(next, `${person.name} marked ${available ? "available" : "unavailable"} at ${formatEventTime(eventTimeToMinutes(slotKey))}.`, previous);
+    const mapped = mapTimeAvailabilityToBlocks(next);
+    dataRef.current = mapped;
+    setData(mapped);
+    setEventLibrary((events) => events.map((event) => event.eventId === mapped.eventId ? mapped : event));
+    queueAvailabilityChange(mapped.eventId, { personId, dayId: day.id, slotKey, available });
   };
 
   const saveAvailabilityWindow = (start: string, end: string) => {
@@ -1193,7 +1326,7 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
     const existingIndex = day.blocks.findIndex((item) => item.id === block.id);
     if (existingIndex >= 0) day.blocks[existingIndex] = block;
     else day.blocks.push(block);
-    day.blocks = sortBlocks(day.blocks);
+    day.blocks = normalizeBlockColors(day.blocks);
     next.draftChanges += 1;
     setBlockEditor(null);
     void save(next, existingIndex >= 0 ? "Block updated everywhere." : "Block added to the schedule.");
@@ -1212,6 +1345,7 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
     duplicate.roles = blockRoles(source).map((role, index) => ({ ...role, id: `${duplicateId}-role-${index}` }));
     duplicate.links = (source.links ?? []).map((link, index) => ({ ...link, id: `${duplicateId}-link-${index}` }));
     day.blocks.splice(sourceIndex + 1, 0, duplicate);
+    day.blocks = normalizeBlockColors(day.blocks);
     next.draftChanges += 1;
     void save(next, `${source.label} duplicated with its roles and instructions.`);
   };
@@ -1233,10 +1367,10 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
     const next = structuredClone(data);
     const day = next.days.find((item) => item.id === dayId)!;
     if (replace) {
-      day.blocks = sortBlocks(blocks);
+      day.blocks = normalizeBlockColors(blocks);
       day.assignments = [];
     } else {
-      day.blocks = sortBlocks([...day.blocks, ...blocks]);
+      day.blocks = normalizeBlockColors([...day.blocks, ...blocks]);
     }
     next.draftChanges += 1;
     setShowScheduleImport(false);
@@ -1253,6 +1387,18 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
     setSaving(true);
     setToast("Universal exec roster updated across events.");
     try {
+      const previousPeople = new Set(sourceEvents.flatMap((event) => event.people.map((person) => person.id)));
+      const previousGroups = new Set(sourceEvents.flatMap((event) => event.groups.map((group) => group.id)));
+      const deletedPeople = Array.from(previousPeople).filter((id) => !people.some((person) => person.id === id));
+      const deletedGroups = Array.from(previousGroups).filter((id) => !groups.some((group) => group.id === id));
+      if (deletedPeople.length || deletedGroups.length) {
+        const deleteResponse = await fetch("/api/roster", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ personIds: deletedPeople, groupIds: deletedGroups }) });
+        const deletePayload = await deleteResponse.json().catch(() => ({}));
+        if (!deleteResponse.ok) throw new Error(deletePayload.error ?? `HTTP ${deleteResponse.status}`);
+      }
+      const rosterResponse = await fetch("/api/roster", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ people, groups }) });
+      const rosterPayload = await rosterResponse.json().catch(() => ({}));
+      if (!rosterResponse.ok) throw new Error(rosterPayload.error ?? `HTTP ${rosterResponse.status}`);
       const persisted = await Promise.all(updatedEvents.map(async (event) => {
         const response = await fetch("/api/event-state", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(event) });
         const payload = await response.json().catch(() => ({}));
@@ -1434,8 +1580,11 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
       }
       setRoleTemplates((current) => [...current.filter((item) => item.id !== saved.id), saved].sort((a, b) => a.name.localeCompare(b.name)));
       const next = structuredClone(data);
-      const current = next.days.flatMap((day) => day.blocks).flatMap((item) => blockRoles(item)).find((item) => item.id === blockRoleId);
-      if (current) Object.assign(current, { templateId: saved.id, templateRevision: saved.revision, customized: false });
+      const previousTemplateId = role.templateId;
+      for (const day of next.days) for (const eventBlock of day.blocks) for (const current of blockRoles(eventBlock)) {
+        if (current.id === blockRoleId || (previousTemplateId && current.templateId === previousTemplateId)) Object.assign(current, { templateId: saved.id, templateRevision: saved.revision, customized: false });
+      }
+      next.roleLibrary = [...next.roleLibrary.filter((template) => template.id !== previousTemplateId && normalizeRoleName(template.name) !== normalizeRoleName(saved.name)), saved];
       next.draftChanges += 1;
       setRoleEditor(null);
       void save(next, `${saved.name} added to the master library.`);
@@ -1468,6 +1617,7 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
   };
 
   const startNewEvent = (values: { name: string; type: string; venue: string; startDate: string; dayCount: number }) => {
+    void flushAvailability();
     const next = createBlankEvent(values, data.people);
     setShowNewEvent(false);
     setShowEventLibrary(false);
@@ -1479,7 +1629,11 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
   };
 
   const switchEvent = (event: EventState) => {
-    setData(normalizeEvent(event));
+    void flushAvailability();
+    const normalized = normalizeEvent(event);
+    dataRef.current = normalized;
+    availabilityCursorRef.current = "";
+    setData(normalized);
     setPublishedData(null);
     setDayId(event.days[0].id);
     setShowEventLibrary(false);
@@ -1603,12 +1757,12 @@ export function RelayWorkspace({ initialMode = "director", portalUser }: { initi
           <main className="workspace">
             <header className="workspace-header">
               <div><div className="eyebrow">{data.eventType} · {data.venue}</div><h1>{data.eventName}</h1><p>{data.dateRange} <span>•</span> Status: {publication.status}{publication.isPublished ? <> <span>•</span> {publication.activity}</> : null}{data.draftChanges ? <> <span>•</span> {data.draftChanges} edit{data.draftChanges === 1 ? "" : "s"} ahead</> : null}</p>{data.relayMeta?.updatedBy ? <small className="audit-line">Last edited by {data.relayMeta.updatedBy}{data.relayMeta.updatedAt ? ` · ${new Date(data.relayMeta.updatedAt).toLocaleString()}` : ""}{data.relayMeta.publishedBy ? ` · Published by ${data.relayMeta.publishedBy}` : ""}</small> : null}</div>
-              <div className="header-actions"><span className={`save-state ${saving ? "saving" : ""}`}>{publishing ? "Publishing…" : saving ? "Saving…" : hydrated ? "All changes saved" : "Connecting…"}</span><button className="button primary" onClick={() => void publish()} disabled={data.draftChanges === 0 || publishing}>{publishing ? "Publishing…" : `Publish ${data.draftChanges ? `${data.draftChanges} changes` : "changes"}`}</button><button className="button text-button" onClick={() => void signOut({ callbackUrl: "/" })} title={portalUser.email}>Sign out</button></div>
+              <div className="header-actions"><span className={`save-state ${saving ? "saving" : ""}`}>{publishing ? "Publishing…" : saving ? "Saving…" : hydrated ? "All changes saved" : "Connecting…"}</span>{section === "schedule" ? <button className="button primary" onClick={() => void publish()} disabled={data.draftChanges === 0 || publishing}>{publishing ? "Publishing…" : `Publish ${data.draftChanges ? `${data.draftChanges} changes` : "changes"}`}</button> : null}<button className="button text-button" onClick={() => void signOut({ callbackUrl: "/" })} title={portalUser.email}>Sign out</button></div>
             </header>
 
-            {section === "schedule" && <ScheduleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} warnings={warnings} reviewTarget={scheduleReviewTarget} selectedRoles={selectedRoles} boardLocked={boardLocked} roleTemplates={roleTemplates} onToggleLock={toggleBoardLock} onSelectRole={toggleSelectedRole} onCell={changeAssignment} onAssignRole={assignBlockRoleToPerson} onEditInterval={(assignment) => setAssignmentIntervalEditor({ blockId: assignment.blockId, personId: assignment.personId, blockRoleId: assignment.blockRoleId, assignmentId: assignment.id })} onClearAssignment={clearAssignment} onMoveAssignment={moveAssignment} onAddRole={addScheduleRoleToBlock} onCreateRole={createAndAddRole} onEditRole={(blockId, blockRoleId) => setRoleEditor({ blockId, blockRoleId })} onRemoveRole={requestBlockRoleRemoval} onAssignRest={assignRestToOnCall} onAddBlock={() => setBlockEditor({})} onImport={() => setShowScheduleImport(true)} onEditBlock={(blockId) => setBlockEditor({ blockId })} onDuplicateBlock={duplicateBlock} onDeleteBlock={setDeleteBlockId} onReview={reviewScheduleCheck} onViewAll={() => setShowScheduleChecks(true)} />}
+            {section === "schedule" && <ScheduleView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} warnings={warnings} reviewTarget={scheduleReviewTarget} selectedRoles={selectedRoles} boardLocked={boardLocked} roleTemplates={scheduleRoleTemplates} onToggleLock={toggleBoardLock} onSelectRole={toggleSelectedRole} onCell={changeAssignment} onAssignRole={assignBlockRoleToPerson} onEditInterval={(assignment) => setAssignmentIntervalEditor({ blockId: assignment.blockId, personId: assignment.personId, blockRoleId: assignment.blockRoleId, assignmentId: assignment.id })} onClearAssignment={clearAssignment} onMoveAssignment={moveAssignment} onAddRole={addScheduleRoleToBlock} onCreateRole={createAndAddRole} onEditRole={(blockId, blockRoleId) => setRoleEditor({ blockId, blockRoleId })} onRemoveRole={requestBlockRoleRemoval} onAssignRest={assignRestToOnCall} onAddBlock={() => setBlockEditor({})} onImport={() => setShowScheduleImport(true)} onEditBlock={(blockId) => setBlockEditor({ blockId })} onDuplicateBlock={duplicateBlock} onDeleteBlock={setDeleteBlockId} onReview={reviewScheduleCheck} onViewAll={() => setShowScheduleChecks(true)} />}
             {section === "prep" && <PrepView data={data} onSave={savePrep} />}
-            {section === "people" && <PeopleView key={`${activeDay.id}-${activeDay.availabilityStart}-${activeDay.availabilityEnd}`} data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} onAvailability={toggleAvailabilitySlot} onWindowChange={saveAvailabilityWindow} />}
+            {section === "people" && <PeopleView key={`${activeDay.id}-${activeDay.availabilityStart}-${activeDay.availabilityEnd}`} data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} saveState={availabilitySaveState} onAvailability={toggleAvailabilitySlot} onWindowChange={saveAvailabilityWindow} />}
             {section === "roles" && <RolesView data={data} activeDay={activeDay} dayId={dayId} setDayId={setDayId} roleTemplates={roleTemplates} onOpen={(blockId, blockRoleId) => setRoleEditor({ blockId, blockRoleId })} onEditBlock={(blockId) => setBlockEditor({ blockId })} onAddRoleToBlock={addLibraryRoleToBlock} onCreateRole={() => setRoleTemplateEditor({})} onEditRole={(templateId) => setRoleTemplateEditor({ templateId })} onImport={() => setShowRoleImport(true)} />}
             {section === "judging" && <JudgingView data={data} onCycle={cycleJudgingStatus} />}
             {section === "resources" && <ResourcesView data={data} onSave={saveOverview} />}
@@ -1939,7 +2093,7 @@ function PrepView({ data, onSave }: { data: EventState; onSave: (sessions: PrepS
   return <div className="content"><div className="section-title compact"><div><span className="kicker">Before the event</span><h2>Prep mini-compendium</h2><p>Plan the working sessions, collect availability, and keep every packing, printing, and walkthrough task in one place.</p></div><div className="prep-header-actions"><button className="button primary" onClick={() => onSave(sessions, tasks, availability)}>Save prep plan</button></div></div><div className="prep-summary"><div><strong>{sessions.length}</strong><span>prep sessions</span></div><div><strong>{tasks.filter((task) => task.done).length}/{tasks.length}</strong><span>tasks complete</span></div><div><strong>{new Set(tasks.map((task) => task.ownerPersonId).filter(Boolean)).size}</strong><span>people owning work</span></div></div><div className="prep-workspace"><section className="prep-panel"><div className="form-section-head"><div><h3>Prep sessions</h3><p>Usually scheduled a few days before the event.</p></div><button onClick={() => setSessions((current) => [...current, { id: `prep-session-${Date.now()}`, label: "New prep session", date: "", start: "5:00 PM", end: "7:00 PM", location: "" }])}>+ Add session</button></div><div className="prep-session-list">{sessions.map((session) => <article key={session.id}><input value={session.label} aria-label="Session name" onChange={(event) => updateSession(session.id, { label: event.target.value })} /><input type="date" value={session.date} aria-label={`${session.label} date`} onChange={(event) => updateSession(session.id, { date: event.target.value })} /><input value={session.start} aria-label={`${session.label} start time`} onChange={(event) => updateSession(session.id, { start: event.target.value })} /><input value={session.end} aria-label={`${session.label} end time`} onChange={(event) => updateSession(session.id, { end: event.target.value })} /><input value={session.location} placeholder="Location" aria-label={`${session.label} location`} onChange={(event) => updateSession(session.id, { location: event.target.value })} /><button onClick={() => { setSessions((current) => current.filter((item) => item.id !== session.id)); setTasks((current) => current.map((task) => task.sessionId === session.id ? { ...task, sessionId: "" } : task)); }} aria-label={`Remove ${session.label}`}>×</button></article>)}</div></section><section className="prep-panel prep-tasks"><div className="form-section-head"><div><h3>Prep checklist</h3><p>This becomes the working mini-compendium for the prep team.</p></div><button onClick={() => setTasks((current) => [...current, { id: `prep-task-${Date.now()}`, label: "New prep task", done: false, ownerPersonId: "", sessionId: sessions[0]?.id ?? "", notes: "" }])}>+ Add task</button></div><div className="prep-task-list">{tasks.map((task) => <article className={task.done ? "done" : ""} key={task.id}><input type="checkbox" checked={task.done} aria-label={`Mark ${task.label} complete`} onChange={(event) => updateTask(task.id, { done: event.target.checked })} /><div><input value={task.label} aria-label="Task" onChange={(event) => updateTask(task.id, { label: event.target.value })} /><input value={task.notes} placeholder="Instructions or items needed" aria-label={`${task.label} notes`} onChange={(event) => updateTask(task.id, { notes: event.target.value })} /></div><select value={task.ownerPersonId} aria-label={`${task.label} owner`} onChange={(event) => updateTask(task.id, { ownerPersonId: event.target.value })}><option value="">No owner</option>{data.people.map((person) => <option value={person.id} key={person.id}>{person.name}</option>)}</select><select value={task.sessionId} aria-label={`${task.label} session`} onChange={(event) => updateTask(task.id, { sessionId: event.target.value })}><option value="">No session</option>{sessions.map((session) => <option value={session.id} key={session.id}>{session.label}</option>)}</select><button onClick={() => setTasks((current) => current.filter((item) => item.id !== task.id))} aria-label={`Remove ${task.label}`}>×</button></article>)}</div></section></div><section className="prep-panel prep-availability"><div className="form-section-head"><div><h3>Prep availability</h3><p>Click a cell to cycle through available, conditional, and unavailable.</p></div></div>{sessions.length ? <div className="availability-scroll"><div className="prep-availability-grid" style={{ "--prep-columns": sessions.length, "--prep-width": `${190 + sessions.length * 170}px` } as React.CSSProperties}><div className="availability-corner">Exec</div>{sessions.map((session) => <div className="availability-head" key={session.id}><strong>{session.label}</strong><small>{session.date || "Date TBD"} · {session.start}</small></div>)}{data.people.map((person) => <div className="availability-row" key={person.id}><div className="availability-person"><PersonAvatar person={person} small /><div><strong>{person.name}</strong><small>{person.team}</small></div></div>{sessions.map((session) => { const status = availability[person.id]?.[session.id] ?? "available"; return <button key={session.id} className={`availability-block ${status}`} onClick={() => cycleAvailability(person.id, session.id)}><span>{status === "available" ? "✓" : status === "conditional" ? "~" : "×"}</span></button>; })}</div>)}</div></div> : <p className="empty-copy">Add a prep session to collect availability.</p>}</section></div>;
 }
 
-function PeopleView({ data, activeDay, dayId, setDayId, onAvailability, onWindowChange }: { data: EventState; activeDay: EventDay; dayId: string; setDayId: (id: string) => void; onAvailability: (personId: string, slotKey: string) => void; onWindowChange: (start: string, end: string) => void }) {
+function PeopleView({ data, activeDay, dayId, setDayId, saveState, onAvailability, onWindowChange }: { data: EventState; activeDay: EventDay; dayId: string; setDayId: (id: string) => void; saveState: "saved" | "pending" | "saving" | "error"; onAvailability: (personId: string, slotKey: string) => void; onWindowChange: (start: string, end: string) => void }) {
   const alphabetizedPeople = sortPeopleAlphabetically(data.people);
   const [start, setStart] = useState(() => eventTimeInputValue(activeDay.availabilityStart, "09:00"));
   const [end, setEnd] = useState(() => eventTimeInputValue(activeDay.availabilityEnd, "17:00"));
@@ -1951,7 +2105,7 @@ function PeopleView({ data, activeDay, dayId, setDayId, onAvailability, onWindow
   const savedStart = eventTimeInputValue(activeDay.availabilityStart, "09:00");
   const savedEnd = eventTimeInputValue(activeDay.availabilityEnd, "17:00");
   const windowChanged = start !== savedStart || end !== savedEnd;
-  return <div className="content"><div className="section-title compact"><div><span className="kicker">People</span><h2>Event availability</h2><p>The universal roster is managed in Settings. Availability stays specific to this event and maps automatically to schedule blocks.</p></div><DayToggle data={data} dayId={dayId} setDayId={setDayId} /></div>
+  return <div className="content"><div className="section-title compact"><div><span className="kicker">People</span><h2>Event availability</h2><p>The universal roster is managed in Settings. Availability stays specific to this event and maps automatically to schedule blocks.</p><small className={`save-state ${saveState === "saving" ? "saving" : ""}`}>{saveState === "pending" ? "Availability changes queued…" : saveState === "saving" ? "Saving availability…" : saveState === "error" ? "Availability save needs retry" : "Availability saved"}</small></div><DayToggle data={data} dayId={dayId} setDayId={setDayId} /></div>
     <section className="availability-card">
       <header className="availability-window"><div><h3>Availability window</h3><p>Set the times people can respond to, even before the schedule is imported.</p></div><div className="availability-window-fields"><label>Start<input type="time" step="1800" value={start} onChange={(event) => setStart(event.target.value)} /></label><span>to</span><label>End<input type="time" step="1800" value={end} onChange={(event) => setEnd(event.target.value)} /></label><button className="button secondary" disabled={!validWindow || !windowChanged} onClick={() => onWindowChange(start, end)}>Update blocks</button></div>{!validWindow ? <small className="field-error" role="alert">{alignedWindow ? "End time must be later than start time." : "Use times ending in :00 or :30."}</small> : null}</header>
       <div className="availability-key"><span><i className="available" /> Available</span><span><i className="unavailable" /> Unavailable</span><small>Each response covers exactly 30 minutes. Schedule blocks will summarize the slots they overlap.</small></div>

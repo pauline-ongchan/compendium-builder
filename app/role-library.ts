@@ -24,6 +24,12 @@ export function normalizeRoleName(value: string) {
     .trim();
 }
 
+export function mergeRoleSources<T extends SharedRoleTemplate>(masterRoles: T[], eventRoles: T[]) {
+  const merged = new Map<string, T>();
+  for (const role of [...masterRoles, ...eventRoles]) merged.set(role.id, role);
+  return Array.from(merged.values()).sort((first, second) => first.name.localeCompare(second.name));
+}
+
 function parseCsvLine(line: string) {
   const cells: string[] = [];
   let cell = "";
